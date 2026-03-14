@@ -1,68 +1,166 @@
 import streamlit as st
 import pandas as pd
 import os
-from datetime import datetime
 
-# Nome do nosso arquivo que servirá de banco de dados
-ARQUIVO_DADOS = 'dados_escritorio.csv'
+# --- CONFIGURAÇÕES DE ARQUIVOS (BANCOS DE DADOS SIMPLES) ---
+ARQUIVO_USUARIOS = 'usuarios.csv'
+ARQUIVO_PROCESSOS = 'processos.csv'
+ARQUIVO_PRAZOS = 'prazos.csv'
 
-# Função para ler o banco de dados
-def carregar_dados():
-    # Se o arquivo já existir, ele lê as informações
-    if os.path.exists(ARQUIVO_DADOS):
-        return pd.read_csv(ARQUIVO_DADOS)
-    # Se não existir (primeiro acesso), ele cria as colunas vazias
+# Função para garantir que os arquivos existam
+def inicializar_banco():
+    if not os.path.exists(ARQUIVO_USUARIOS):
+        # Cria um usuário administrador padrão: login 'admin', senha 'admin'
+        df_users = pd.DataFrame([{'login': 'admin', 'senha': 'admin', 'perfil': 'Administrador'}])
+        df_users.to_csv(ARQUIVO_USUARIOS, index=False)
+    
+    if not os.path.exists(ARQUIVO_PROCESSOS):
+        pd.DataFrame(columns=['id_processo', 'tipo', 'numero', 'cliente']).to_csv(ARQUIVO_PROCESSOS, index=False)
+        
+    if not os.path.exists(ARQUIVO_PRAZOS):
+        pd.DataFrame(columns=['id_prazo', 'processo', 'diligencia', 'data_limite', 'responsavel', 'status']).to_csv(ARQUIVO_PRAZOS, index=False)
+
+# Funções de Leitura e Gravação
+def carregar_dados(arquivo):
+    return pd.read_csv(arquivo)
+
+def salvar_dados(df, arquivo):
+    df.to_csv(arquivo, index=False)
+
+# Inicializa os arquivos no primeiro carregamento
+inicializar_banco()
+
+# --- CONTROLE DE SESSÃO (LOGIN) ---
+if 'usuario_logado' not in st.session_state:
+    st.session_state['usuario_logado'] = None
+if 'perfil_usuario' not in st.session_state:
+    st.session_state['perfil_usuario'] = None
+
+# --- TELA DE LOGIN ---
+def tela_login():
+    st.title("⚖️ Sistema de Gestão Jurídica")
+    st.subheader("Acesso ao Sistema")
+    
+    login_input = st.text_input("Login")
+    senha_input = st.text_input("Senha", type="password")
+    
+    if st.button("Entrar"):
+        df_users = carregar_dados(ARQUIVO_USUARIOS)
+        # Verifica se existe um usuário com o login e senha informados
+        usuario = df_users[(df_users['login'] == login_input) & (df_users['senha'] == senha_input)]
+        
+        if not usuario.empty:
+            st.session_state['usuario_logado'] = usuario.iloc[0]['login']
+            st.session_state['perfil_usuario'] = usuario.iloc[0]['perfil']
+            st.rerun() # Atualiza a página para entrar no sistema
+        else:
+            st.error("Login ou senha incorretos.")
+
+# --- TELA PRINCIPAL (APÓS LOGIN) ---
+def tela_principal():
+    st.sidebar.title(f"Bem-vindo, {st.session_state['usuario_logado']}")
+    st.sidebar.write(f"Perfil: {st.session_state['perfil_usuario']}")
+    
+    if st.sidebar.button("Sair"):
+        st.session_state['usuario_logado'] = None
+        st.session_state['perfil_usuario'] = None
+        st.rerun()
+
+    # Carrega os dados para uso na tela
+    df_processos = carregar_dados(ARQUIVO_PROCESSOS)
+    df_prazos = carregar_dados(ARQUIVO_PRAZOS)
+    df_usuarios = carregar_dados(ARQUIVO_USUARIOS)
+
+    # --- VISÃO DO ADMINISTRADOR ---
+    if st.session_state['perfil_usuario'] == 'Administrador':
+        aba1, aba2, aba3, aba4 = st.tabs(["Painel de Prazos", "Cadastrar Prazo/Diligência", "Cadastrar Processo", "Gerenciar Usuários"])
+        
+        with aba1:
+            st.header("Todos os Prazos")
+            if not df_prazos.empty:
+                st.dataframe(df_prazos)
+                
+                st.subheader("Redistribuir ou Arquivar Prazo")
+                id_prazo_alvo = st.selectbox("Selecione o Prazo:", df_prazos['id_prazo'].tolist())
+                novo_responsavel = st.selectbox("Novo Responsável:", df_usuarios['login'].tolist())
+                novo_status = st.selectbox("Status:", ["Ativo", "Arquivado"])
+                
+                if st.button("Atualizar Prazo"):
+                    # Atualiza a linha correspondente no banco de dados
+                    df_prazos.loc[df_prazos['id_prazo'] == id_prazo_alvo, 'responsavel'] = novo_responsavel
+                    df_prazos.loc[df_prazos['id_prazo'] == id_prazo_alvo, 'status'] = novo_status
+                    salvar_dados(df_prazos, ARQUIVO_PRAZOS)
+                    st.success("Prazo atualizado com sucesso!")
+                    st.rerun()
+            else:
+                st.info("Nenhum prazo cadastrado.")
+
+        with aba2:
+            st.header("Novo Prazo / Diligência")
+            if not df_processos.empty:
+                processo_sel = st.selectbox("Vincular ao Processo:", df_processos['numero'].tolist())
+                diligencia = st.text_input("Descrição da Diligência/Tarefa:")
+                data_limite = st.date_input("Data Limite:")
+                responsavel = st.selectbox("Atribuir ao Usuário:", df_usuarios['login'].tolist())
+                
+                if st.button("Salvar Prazo"):
+                    novo_id = f"PZ-{len(df_prazos) + 1}"
+                    novo_prazo = pd.DataFrame([{
+                        'id_prazo': novo_id, 'processo': processo_sel, 
+                        'diligencia': diligencia, 'data_limite': data_limite, 
+                        'responsavel': responsavel, 'status': 'Ativo'
+                    }])
+                    df_prazos = pd.concat([df_prazos, novo_prazo], ignore_index=True)
+                    salvar_dados(df_prazos, ARQUIVO_PRAZOS)
+                    st.success("Prazo atribuído com sucesso!")
+            else:
+                st.warning("Cadastre um processo primeiro.")
+
+        with aba3:
+            st.header("Novo Processo")
+            tipo_proc = st.selectbox("Tipo:", ["Judicial", "Extrajudicial"])
+            num_proc = st.text_input("Número do Processo / Identificador:")
+            cliente = st.text_input("Nome do Cliente:")
+            
+            if st.button("Salvar Processo"):
+                if num_proc and cliente:
+                    novo_id = f"PR-{len(df_processos) + 1}"
+                    novo_proc = pd.DataFrame([{'id_processo': novo_id, 'tipo': tipo_proc, 'numero': num_proc, 'cliente': cliente}])
+                    df_processos = pd.concat([df_processos, novo_proc], ignore_index=True)
+                    salvar_dados(df_processos, ARQUIVO_PROCESSOS)
+                    st.success("Processo cadastrado!")
+                else:
+                    st.error("Preencha todos os campos.")
+
+        with aba4:
+            st.header("Cadastrar Novo Usuário")
+            novo_login = st.text_input("Novo Login:")
+            nova_senha = st.text_input("Nova Senha:", type="password")
+            novo_perfil = st.selectbox("Perfil:", ["Usuário", "Administrador"])
+            
+            if st.button("Criar Usuário"):
+                if novo_login and nova_senha:
+                    novo_user = pd.DataFrame([{'login': novo_login, 'senha': nova_senha, 'perfil': novo_perfil}])
+                    df_usuarios = pd.concat([df_usuarios, novo_user], ignore_index=True)
+                    salvar_dados(df_usuarios, ARQUIVO_USUARIOS)
+                    st.success(f"Usuário {novo_login} criado!")
+                else:
+                    st.error("Preencha login e senha.")
+
+    # --- VISÃO DO USUÁRIO COMUM ---
     else:
-        return pd.DataFrame(columns=['Data e Hora', 'Condomínio', 'Tipo', 'Descrição'])
-
-# Função para salvar as novas informações no banco de dados
-def salvar_dados(planilha):
-    planilha.to_csv(ARQUIVO_DADOS, index=False)
-
-# --- COMEÇO DA TELA DO SISTEMA ---
-
-st.title("Sistema do Escritório 🏢")
-st.write("Preencha os dados abaixo para registrar uma nova ação e salvar no banco de dados.")
-
-st.subheader("Nova Ocorrência")
-
-# Nossas caixas de preenchimento
-condominio = st.selectbox("Selecione o Condomínio:", ["Edifício Villa Imperial", "Residencial Jardins", "Outro"])
-tipo = st.selectbox("Tipo de Ação:", ["Notificação", "Manutenção", "Contrato", "Reunião"])
-descricao = st.text_area("Descrição detalhada da ocorrência:")
-
-# O que acontece quando clica no botão Salvar
-if st.button("Salvar Registro"):
-    if descricao == "":
-        st.error("Por favor, preencha a descrição antes de salvar!")
-    else:
-        # Pega a data e hora do momento do clique
-        data_atual = datetime.now().strftime("%d/%m/%Y %H:%M")
+        st.header("Meus Prazos e Diligências")
+        # Filtra os prazos para mostrar apenas os do usuário logado e que estejam ativos
+        meus_prazos = df_prazos[(df_prazos['responsavel'] == st.session_state['usuario_logado']) & (df_prazos['status'] == 'Ativo')]
         
-        # Cria a "linha" com os dados novos
-        novo_registro = pd.DataFrame([{
-            'Data e Hora': data_atual,
-            'Condomínio': condominio,
-            'Tipo': tipo,
-            'Descrição': descricao
-        }])
-        
-        # Carrega a planilha antiga, junta com a linha nova e salva tudo
-        planilha_atual = carregar_dados()
-        planilha_atualizada = pd.concat([planilha_atual, novo_registro], ignore_index=True)
-        salvar_dados(planilha_atualizada)
-        
-        st.success("✅ Registro salvo com sucesso e armazenado na base de dados!")
+        if not meus_prazos.empty:
+            st.dataframe(meus_prazos[['processo', 'diligencia', 'data_limite']])
+        else:
+            st.success("Você não tem prazos ativos no momento. Bom trabalho!")
 
-st.divider() # Cria uma linha separadora na tela
-
-# --- MOSTRAR OS DADOS SALVOS ---
-st.subheader("📂 Registros Salvos (Banco de Dados)")
-
-# Carrega e exibe a tabela atualizada
-dados_para_mostrar = carregar_dados()
-
-if not dados_para_mostrar.empty:
-    st.dataframe(dados_para_mostrar, use_container_width=True)
+# --- MOTOR DO APLICATIVO ---
+# Decide qual tela mostrar com base no login
+if st.session_state['usuario_logado'] is None:
+    tela_login()
 else:
-    st.info("Nenhum registro encontrado. A base de dados está vazia.")
+    tela_principal()
