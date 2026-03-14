@@ -20,7 +20,7 @@ except Exception as e:
 def carregar_usuarios():
     res = supabase.table('usuarios').select("*").execute()
     if not res.data:
-        return pd.DataFrame(columns=['login', 'senha', 'perfil'])
+        return pd.DataFrame(columns=['id', 'login', 'senha', 'perfil'])
     return pd.DataFrame(res.data)
 
 def carregar_processos():
@@ -414,36 +414,35 @@ def tela_principal():
                                 else:
                                     st.write("📝 *Nenhuma tarefa vinculada a este processo.*")
 
-        # 6. GERENCIAR USUÁRIOS (NOVO E MELHORADO)
+        # 6. GERENCIAR USUÁRIOS (NOVO E CORRIGIDO)
         elif menu_admin == "Gerenciar Usuários":
             st.header("👥 Gerenciar Usuários")
             
-            # --- FORMULÁRIO ESCONDIDO NA SANFONA ---
             with st.expander("➕ Cadastrar Novo Usuário", expanded=False):
                 with st.form("form_novo_usuario", clear_on_submit=True):
-                    novo_login = st.text_input("Novo Login:")
+                    novo_login = st.text_input("Novo Login (Nome de usuário):")
                     nova_senha = st.text_input("Nova Senha:", type="password")
                     novo_perfil = st.selectbox("Perfil:", ["Usuário", "Administrador"])
                     submit_user = st.form_submit_button("Criar Usuário")
                     
                     if submit_user:
-                        if novo_login and nova_senha:
-                            if not df_usuarios.empty and novo_login in df_usuarios['login'].values:
+                        # Corta espaços em branco sem querer para evitar erros de login duplo
+                        novo_login_limpo = novo_login.strip() 
+                        if novo_login_limpo and nova_senha:
+                            if not df_usuarios.empty and novo_login_limpo in df_usuarios['login'].values:
                                 st.error("Este login já existe! Escolha outro.")
                             else:
-                                supabase.table('usuarios').insert({'login': novo_login, 'senha': nova_senha, 'perfil': novo_perfil}).execute()
-                                st.success(f"✅ Usuário '{novo_login}' criado com sucesso!")
+                                supabase.table('usuarios').insert({'login': novo_login_limpo, 'senha': nova_senha, 'perfil': novo_perfil}).execute()
+                                st.success(f"✅ Usuário '{novo_login_limpo}' criado com sucesso!")
                                 time.sleep(2)
                                 st.rerun()
                         else:
                             st.error("Preencha login e senha.")
 
-            # --- LISTA E EDIÇÃO DE USUÁRIOS ---
             st.divider()
             st.subheader("Usuários Cadastrados")
             
             if not df_usuarios.empty:
-                # Variáveis de controle de edição de usuários
                 if 'modo_edicao_user' not in st.session_state:
                     st.session_state['modo_edicao_user'] = False
                 if 'id_editar_user' not in st.session_state:
@@ -454,15 +453,17 @@ def tela_principal():
                     df_exibicao_user = df_usuarios.copy()
                     df_exibicao_user.insert(0, "Selecionar", False)
                     
-                    colunas_user = ['Selecionar', 'login', 'senha', 'perfil']
+                    # Usando o ID interno e invisível do Supabase para não confundir nomes duplicados
+                    colunas_user = ['Selecionar', 'id', 'login', 'senha', 'perfil']
                     
                     tabela_users = st.data_editor(
                         df_exibicao_user[colunas_user],
                         hide_index=True,
-                        disabled=['login', 'senha', 'perfil'], # Bloqueia digitação direta
+                        disabled=['id', 'login', 'senha', 'perfil'], 
                         use_container_width=True,
                         column_config={
                             "Selecionar": st.column_config.CheckboxColumn("✓", width="small"),
+                            "id": None, # Esconde o ID visualmente
                             "login": st.column_config.TextColumn("Login/Usuário"),
                             "senha": st.column_config.TextColumn("Senha Atual"), 
                             "perfil": st.column_config.TextColumn("Perfil de Acesso")
@@ -479,7 +480,8 @@ def tela_principal():
                                     if row['login'] == 'admin':
                                         st.error("⚠️ Não é possível excluir o usuário Administrador Principal ('admin').")
                                     else:
-                                        supabase.table('usuarios').delete().eq('login', row['login']).execute()
+                                        # Exclui pelo ID exato da linha, resolvendo o problema do duplicado!
+                                        supabase.table('usuarios').delete().eq('id', row['id']).execute()
                                 st.success("✅ Ação concluída!")
                                 time.sleep(2)
                                 st.rerun()
@@ -490,10 +492,11 @@ def tela_principal():
                         if st.button("✏️ EDITAR USUÁRIO"):
                             if len(linhas_selecionadas_user) == 1:
                                 if linhas_selecionadas_user.iloc[0]['login'] == 'admin':
-                                    st.warning("⚠️ O login 'admin' é protegido e não pode ser editado.")
+                                    st.warning("⚠️ O login 'admin' é protegido e não pode ser editado. Crie outro administrador se necessário.")
                                 else:
                                     st.session_state['modo_edicao_user'] = True
-                                    st.session_state['id_editar_user'] = linhas_selecionadas_user.iloc[0]['login']
+                                    # Grava o ID da linha para a edição exata
+                                    st.session_state['id_editar_user'] = linhas_selecionadas_user.iloc[0]['id']
                                     st.rerun()
                             elif len(linhas_selecionadas_user) > 1:
                                 st.warning("Por favor, selecione apenas UM usuário para editar por vez.")
@@ -503,8 +506,8 @@ def tela_principal():
                 # MODO DE EDIÇÃO DE USUÁRIO ATIVO
                 else:
                     st.subheader("✏️ Alterar Senha ou Perfil")
-                    login_alvo = st.session_state['id_editar_user']
-                    df_editar_user = df_usuarios[df_usuarios['login'] == login_alvo].copy()
+                    id_alvo_u = st.session_state['id_editar_user']
+                    df_editar_user = df_usuarios[df_usuarios['id'] == id_alvo_u].copy()
                     
                     df_editado_user = st.data_editor(
                         df_editar_user[['login', 'senha', 'perfil']],
@@ -521,9 +524,14 @@ def tela_principal():
                     with col_salvar_u:
                         if st.button("💾 SALVAR ALTERAÇÃO"):
                             linha_atualizada_u = df_editado_user.iloc[0]
-                            dados_atualizados_u = linha_atualizada_u.to_dict()
                             
-                            supabase.table('usuarios').update(dados_atualizados_u).eq('login', login_alvo).execute()
+                            dados_atualizados_u = {
+                                'senha': linha_atualizada_u['senha'],
+                                'perfil': linha_atualizada_u['perfil']
+                            }
+                            
+                            # Atualiza baseado no ID invisível da linha correta
+                            supabase.table('usuarios').update(dados_atualizados_u).eq('id', int(id_alvo_u)).execute()
                             
                             st.success("✅ Dados do usuário atualizados com sucesso!")
                             st.session_state['modo_edicao_user'] = False
