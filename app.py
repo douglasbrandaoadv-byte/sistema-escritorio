@@ -5,7 +5,7 @@ import os
 # --- CONFIGURAÇÕES DE ARQUIVOS (BANCOS DE DADOS SIMPLES) ---
 ARQUIVO_USUARIOS = 'usuarios.csv'
 ARQUIVO_PROCESSOS = 'processos.csv'
-ARQUIVO_PRAZOS = 'prazos.csv'
+ARQUIVO_PRAZOS = 'ARQUIVO_PRAZOS = 'prazos_v2.csv'
 
 def inicializar_banco():
     if not os.path.exists(ARQUIVO_USUARIOS):
