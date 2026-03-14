@@ -64,7 +64,6 @@ def tela_principal():
     df_prazos = carregar_dados(ARQUIVO_PRAZOS)
     df_usuarios = carregar_dados(ARQUIVO_USUARIOS)
 
-    # Garante que a coluna 'processo' seja tratada como texto para evitar erros na busca
     df_prazos['processo'] = df_prazos['processo'].astype(str)
     df_processos['numero'] = df_processos['numero'].astype(str)
     df_processos['cliente'] = df_processos['cliente'].astype(str)
@@ -73,7 +72,14 @@ def tela_principal():
     if st.session_state['perfil_usuario'] == 'Administrador':
         menu_admin = st.sidebar.radio(
             "Navegação:", 
-            ["Painel de Prazos", "Cadastrar Prazo/Diligência", "Cadastrar Processo", "Histórico de Processo", "Gerenciar Usuários"]
+            [
+                "Painel de Prazos", 
+                "Pendente de Revisão", 
+                "Cadastrar Prazo/Diligência", 
+                "Cadastrar Processo", 
+                "Histórico de Processo", 
+                "Gerenciar Usuários"
+            ]
         )
         
         st.sidebar.divider()
@@ -85,25 +91,42 @@ def tela_principal():
         # 1. TELA: PAINEL DE PRAZOS
         if menu_admin == "Painel de Prazos":
             st.header("Painel Geral de Prazos")
+            st.write("Lista cronológica de todos os prazos cadastrados no sistema.")
+            
             if not df_prazos.empty:
-                st.dataframe(df_prazos[['processo', 'tarefa', 'responsavel', 'data_fim', 'status', 'urgente']], use_container_width=True)
+                # Ordena os prazos pela data final (ordem cronológica)
+                df_prazos_ordenado = df_prazos.sort_values(by='data_fim', ascending=True)
                 
-                st.divider()
-                st.subheader("Ações: Atualizar Status do Prazo")
-                id_prazo_alvo = st.selectbox("Selecione o ID do Prazo:", df_prazos['id_prazo'].tolist())
-                novo_responsavel = st.selectbox("Novo Responsável:", df_usuarios['login'].tolist())
-                novo_status = st.selectbox("Status:", ["Ativo", "Concluído", "Arquivado"])
-                
-                if st.button("Atualizar Prazo"):
-                    df_prazos.loc[df_prazos['id_prazo'] == id_prazo_alvo, 'responsavel'] = novo_responsavel
-                    df_prazos.loc[df_prazos['id_prazo'] == id_prazo_alvo, 'status'] = novo_status
-                    salvar_dados(df_prazos, ARQUIVO_PRAZOS)
-                    st.success("Prazo atualizado com sucesso!")
-                    st.rerun()
+                # Exibe a tabela completa com todas as informações
+                st.dataframe(df_prazos_ordenado, use_container_width=True)
             else:
                 st.info("Nenhum prazo cadastrado no sistema ainda.")
 
-        # 2. TELA: CADASTRAR PRAZO/DILIGÊNCIA
+        # 2. TELA: PENDENTE DE REVISÃO (Administrador)
+        elif menu_admin == "Pendente de Revisão":
+            st.header("Aprovação de Tarefas")
+            st.write("Tarefas marcadas como concluídas pela equipe aguardando a sua revisão.")
+            
+            df_revisao = df_prazos[df_prazos['status'] == 'Pendente de Revisão']
+            
+            if not df_revisao.empty:
+                st.dataframe(df_revisao, use_container_width=True)
+                
+                st.divider()
+                st.subheader("Revisar Tarefa")
+                id_alvo = st.selectbox("Selecione o ID do Prazo para revisar:", df_revisao['id_prazo'].tolist())
+                decisao = st.radio("Ação:", ["Aprovar (Marcar como Concluído)", "Recusar (Devolver para Ativo)"])
+                
+                if st.button("Confirmar Revisão"):
+                    novo_status = "Concluído" if "Aprovar" in decisao else "Ativo"
+                    df_prazos.loc[df_prazos['id_prazo'] == id_alvo, 'status'] = novo_status
+                    salvar_dados(df_prazos, ARQUIVO_PRAZOS)
+                    st.success(f"Tarefa {id_alvo} atualizada para: {novo_status}!")
+                    st.rerun()
+            else:
+                st.success("Tudo limpo! Nenhuma tarefa aguardando revisão no momento.")
+
+        # 3. TELA: CADASTRAR PRAZO/DILIGÊNCIA
         elif menu_admin == "Cadastrar Prazo/Diligência":
             st.header("Cadastrar Novo Prazo / Diligência")
             
@@ -123,16 +146,19 @@ def tela_principal():
             urgente = st.checkbox("🚨 URGENTE")
             
             if st.button("CADASTRAR"):
-                # Validações de preenchimento
                 if tarefa == "":
                     st.error("A descrição da Tarefa/Diligência é obrigatória.")
                 elif vincular and processo == "":
                     st.error("Para vincular, você precisa digitar o Nome ou Número do Processo acima.")
                 else:
                     novo_id = f"PZ-{len(df_prazos) + 1}"
+                    
+                    # Se não for vincular, podemos deixar o campo processo visualmente mais limpo
+                    processo_salvar = processo if vincular else (processo if processo else "Não vinculado")
+                    
                     novo_prazo = pd.DataFrame([{
                         'id_prazo': novo_id, 
-                        'processo': processo, 
+                        'processo': processo_salvar, 
                         'orgao_ente': orgao,
                         'tarefa': tarefa, 
                         'data_inicio': data_inicio, 
@@ -146,7 +172,7 @@ def tela_principal():
                     salvar_dados(df_prazos, ARQUIVO_PRAZOS)
                     st.success("✅ Tarefa cadastrada e atribuída com sucesso!")
 
-        # 3. TELA: CADASTRAR PROCESSO
+        # 4. TELA: CADASTRAR PROCESSO
         elif menu_admin == "Cadastrar Processo":
             st.header("Cadastrar Novo Processo")
             tipo_proc = st.selectbox("Tipo:", ["Judicial", "Extrajudicial"])
@@ -155,7 +181,6 @@ def tela_principal():
             
             if st.button("Salvar Processo"):
                 if num_proc and cliente:
-                    # Remove pontos e traços por segurança na hora de salvar
                     num_proc_limpo = num_proc.replace(".", "").replace("-", "")
                     novo_id = f"PR-{len(df_processos) + 1}"
                     novo_proc = pd.DataFrame([{'id_processo': novo_id, 'tipo': tipo_proc, 'numero': num_proc_limpo, 'cliente': cliente}])
@@ -165,44 +190,35 @@ def tela_principal():
                 else:
                     st.error("Preencha o Número e o Cliente.")
 
-        # 4. TELA: HISTÓRICO DE PROCESSO (Novo)
+        # 5. TELA: HISTÓRICO DE PROCESSO
         elif menu_admin == "Histórico de Processo":
             st.header("🔍 Histórico e Busca de Processos")
-            st.write("Preencha um dos campos abaixo para encontrar o processo e suas tarefas.")
-            
             col_b1, col_b2 = st.columns(2)
             with col_b1:
-                busca_numero = st.text_input("Buscar pelo Número do Processo:", help="O número do processo não deve conter ponto ou hífens, sendo permitido apenas números.")
+                busca_numero = st.text_input("Buscar pelo Número do Processo:", help="Apenas números.")
             with col_b2:
                 busca_cliente = st.text_input("Buscar pelo Nome do Cliente:")
                 
             if st.button("PESQUISAR"):
                 resultados = df_processos.copy()
-                
-                # Filtra pelos campos preenchidos
                 if busca_numero:
                     busca_numero_limpo = busca_numero.replace(".", "").replace("-", "")
                     resultados = resultados[resultados['numero'].str.contains(busca_numero_limpo, case=False, na=False)]
-                
                 if busca_cliente:
                     resultados = resultados[resultados['cliente'].str.contains(busca_cliente, case=False, na=False)]
                 
                 if not busca_numero and not busca_cliente:
-                    st.warning("Preencha pelo menos um dos campos (Número ou Cliente) para pesquisar.")
+                    st.warning("Preencha pelo menos um dos campos para pesquisar.")
                 elif resultados.empty:
-                    st.info("Nenhum processo encontrado com as informações fornecidas.")
+                    st.info("Nenhum processo encontrado.")
                 else:
                     st.success(f"Encontramos {len(resultados)} processo(s)!")
-                    
-                    # Exibe o painel para cada processo encontrado
                     for index, row in resultados.iterrows():
                         with st.expander(f"📁 Processo: {row['numero']} | Cliente: {row['cliente']}", expanded=True):
                             st.write(f"**Tipo:** {row['tipo']}")
-                            
                             st.divider()
-                            st.subheader("Tarefas e Prazos Vinculados")
+                            st.subheader("Tarefas Vinculadas")
                             
-                            # Busca as tarefas atreladas a este processo específico
                             prazos_vinculados = df_prazos[
                                 (df_prazos['processo'].str.contains(row['numero'], case=False, na=False)) |
                                 (df_prazos['processo'].str.contains(row['cliente'], case=False, na=False))
@@ -211,9 +227,9 @@ def tela_principal():
                             if not prazos_vinculados.empty:
                                 st.dataframe(prazos_vinculados[['tarefa', 'responsavel', 'data_fim', 'status', 'urgente']], use_container_width=True)
                             else:
-                                st.write("📝 *Nenhuma tarefa vinculada a este processo no momento.*")
+                                st.write("📝 *Nenhuma tarefa vinculada a este processo.*")
 
-        # 5. TELA: GERENCIAR USUÁRIOS
+        # 6. TELA: GERENCIAR USUÁRIOS
         elif menu_admin == "Gerenciar Usuários":
             st.header("Cadastrar Novo Usuário")
             novo_login = st.text_input("Novo Login:")
@@ -234,21 +250,53 @@ def tela_principal():
 
     # --- VISÃO DO USUÁRIO COMUM ---
     else:
+        menu_user = st.sidebar.radio(
+            "Navegação:", 
+            ["Meus Prazos Ativos", "Pendente de Revisão"]
+        )
+        
         st.sidebar.divider()
         if st.sidebar.button("Sair / Logout"):
             st.session_state['usuario_logado'] = None
             st.session_state['perfil_usuario'] = None
             st.rerun()
 
-        st.header("Meus Prazos e Diligências")
-        
-        meus_prazos = df_prazos[(df_prazos['responsavel'] == st.session_state['usuario_logado']) & (df_prazos['status'] == 'Ativo')]
-        
-        if not meus_prazos.empty:
-            tabela_exibicao = meus_prazos[['processo', 'orgao_ente', 'tarefa', 'data_inicio', 'data_fim', 'urgente']]
-            st.dataframe(tabela_exibicao, use_container_width=True)
-        else:
-            st.success("Você não tem prazos ativos no momento. Bom trabalho!")
+        # TELA 1 DO USUÁRIO: MEUS PRAZOS ATIVOS
+        if menu_user == "Meus Prazos Ativos":
+            st.header("Meus Prazos e Diligências")
+            
+            meus_prazos = df_prazos[(df_prazos['responsavel'] == st.session_state['usuario_logado']) & (df_prazos['status'] == 'Ativo')]
+            
+            if not meus_prazos.empty:
+                # Ordena para o usuário também ver o que vence primeiro
+                meus_prazos = meus_prazos.sort_values(by='data_fim')
+                
+                st.dataframe(meus_prazos[['id_prazo', 'processo', 'orgao_ente', 'tarefa', 'data_inicio', 'data_fim', 'urgente']], use_container_width=True)
+                
+                st.divider()
+                st.subheader("Entregar Tarefa / Diligência")
+                tarefa_concluida = st.selectbox("Selecione o ID da tarefa que você finalizou:", meus_prazos['id_prazo'].tolist())
+                
+                # Botão para o usuário mudar o status
+                if st.button("Enviar para Revisão do Administrador"):
+                    df_prazos.loc[df_prazos['id_prazo'] == tarefa_concluida, 'status'] = 'Pendente de Revisão'
+                    salvar_dados(df_prazos, ARQUIVO_PRAZOS)
+                    st.success("Tarefa enviada para revisão com sucesso!")
+                    st.rerun()
+            else:
+                st.success("Você não tem prazos ativos no momento. Bom trabalho!")
+
+        # TELA 2 DO USUÁRIO: PENDENTE DE REVISÃO
+        elif menu_user == "Pendente de Revisão":
+            st.header("Minhas Tarefas em Revisão")
+            st.write("Acompanhe aqui as tarefas que você já entregou e que estão aguardando aprovação.")
+            
+            minhas_revisoes = df_prazos[(df_prazos['responsavel'] == st.session_state['usuario_logado']) & (df_prazos['status'] == 'Pendente de Revisão')]
+            
+            if not minhas_revisoes.empty:
+                st.dataframe(minhas_revisoes[['id_prazo', 'processo', 'tarefa', 'data_fim', 'urgente']], use_container_width=True)
+            else:
+                st.info("Você não tem nenhuma tarefa aguardando revisão.")
 
 # --- MOTOR DO APLICATIVO ---
 if st.session_state['usuario_logado'] is None:
