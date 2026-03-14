@@ -112,6 +112,7 @@ def tela_principal():
             st.session_state['usuario_logado'] = None
             st.session_state['perfil_usuario'] = None
             if 'modo_edicao' in st.session_state: del st.session_state['modo_edicao']
+            if 'modo_edicao_user' in st.session_state: del st.session_state['modo_edicao_user']
             st.rerun()
 
         # 1. PAINEL DE PRAZOS
@@ -120,7 +121,6 @@ def tela_principal():
             
             if not df_prazos.empty:
                 with st.expander("🔍 Filtros de Busca", expanded=True):
-                    # Dividimos os filtros em duas linhas para ficar mais organizado
                     col_f1, col_f2 = st.columns(2)
                     with col_f1:
                         filtro_cliente = st.text_input("Cliente:")
@@ -137,16 +137,13 @@ def tela_principal():
                 
                 df_filtrado = df_prazos.copy()
                 
-                # Aplicando os novos filtros separados
                 if filtro_cliente:
                     df_filtrado = df_filtrado[df_filtrado['nome_cliente'].astype(str).str.contains(filtro_cliente, case=False, na=False)]
-                
                 if filtro_proc_tar:
                     df_filtrado = df_filtrado[
                         df_filtrado['processo'].astype(str).str.contains(filtro_proc_tar, case=False, na=False) |
                         df_filtrado['nome_tarefa'].astype(str).str.contains(filtro_proc_tar, case=False, na=False)
                     ]
-                    
                 if filtro_resp:
                     df_filtrado = df_filtrado[df_filtrado['responsavel'].isin(filtro_resp)]
                 if filtro_status:
@@ -206,17 +203,14 @@ def tela_principal():
                                 else:
                                     st.warning("Selecione uma linha marcando a caixa de seleção para editar.")
 
-                        # --- NOVA ÁREA: DETALHES DA SELEÇÃO ---
+                        # --- DETALHES DA SELEÇÃO ---
                         if not linhas_selecionadas.empty:
                             st.divider()
                             st.subheader("📄 Detalhes do Registro Selecionado")
                             
                             for index, row in linhas_selecionadas.iterrows():
-                                # Busca os dados completos originais no banco carregado
                                 id_sel = row['id_prazo']
                                 dados_completos = df_prazos[df_prazos['id_prazo'] == id_sel].iloc[0]
-                                
-                                # Verifica se tem alerta de urgência para o título
                                 icone_urgente = "🚨 " if dados_completos['urgente'] == "Sim" else "📁 "
                                 
                                 with st.expander(f"{icone_urgente} {dados_completos['nome_tarefa']} | Cliente: {dados_completos['nome_cliente']}", expanded=True):
@@ -233,7 +227,6 @@ def tela_principal():
                                         st.write(f"**Prazo Final:** {dados_completos['data_fim']}")
                                     
                                     st.write("**Descrição Detalhada / Diligência:**")
-                                    # Caixa de texto limpa para ler descrições longas
                                     if pd.notna(dados_completos['tarefa']) and dados_completos['tarefa'].strip() != "":
                                         st.info(dados_completos['tarefa'])
                                     else:
@@ -270,9 +263,7 @@ def tela_principal():
                         if st.button("💾 SALVAR"):
                             linha_atualizada = df_editado.iloc[0]
                             dados_atualizados = linha_atualizada.to_dict()
-                            
                             supabase.table('prazos').update(dados_atualizados).eq('id_prazo', id_alvo).execute()
-                            
                             st.success("✅ Cadastro alterado com sucesso!")
                             st.session_state['modo_edicao'] = False
                             st.session_state['id_editar'] = None
@@ -423,26 +414,128 @@ def tela_principal():
                                 else:
                                     st.write("📝 *Nenhuma tarefa vinculada a este processo.*")
 
-        # 6. GERENCIAR USUÁRIOS
+        # 6. GERENCIAR USUÁRIOS (NOVO E MELHORADO)
         elif menu_admin == "Gerenciar Usuários":
-            st.header("Cadastrar Novo Usuário")
-            with st.form("form_novo_usuario", clear_on_submit=True):
-                novo_login = st.text_input("Novo Login:")
-                nova_senha = st.text_input("Nova Senha:", type="password")
-                novo_perfil = st.selectbox("Perfil:", ["Usuário", "Administrador"])
-                submit_user = st.form_submit_button("Criar Usuário")
-                
-                if submit_user:
-                    if novo_login and nova_senha:
-                        if not df_usuarios.empty and novo_login in df_usuarios['login'].values:
-                            st.error("Este login já existe! Escolha outro.")
+            st.header("👥 Gerenciar Usuários")
+            
+            # --- FORMULÁRIO ESCONDIDO NA SANFONA ---
+            with st.expander("➕ Cadastrar Novo Usuário", expanded=False):
+                with st.form("form_novo_usuario", clear_on_submit=True):
+                    novo_login = st.text_input("Novo Login:")
+                    nova_senha = st.text_input("Nova Senha:", type="password")
+                    novo_perfil = st.selectbox("Perfil:", ["Usuário", "Administrador"])
+                    submit_user = st.form_submit_button("Criar Usuário")
+                    
+                    if submit_user:
+                        if novo_login and nova_senha:
+                            if not df_usuarios.empty and novo_login in df_usuarios['login'].values:
+                                st.error("Este login já existe! Escolha outro.")
+                            else:
+                                supabase.table('usuarios').insert({'login': novo_login, 'senha': nova_senha, 'perfil': novo_perfil}).execute()
+                                st.success(f"✅ Usuário '{novo_login}' criado com sucesso!")
+                                time.sleep(2)
+                                st.rerun()
                         else:
-                            supabase.table('usuarios').insert({'login': novo_login, 'senha': nova_senha, 'perfil': novo_perfil}).execute()
-                            st.success(f"✅ Usuário '{novo_login}' criado com sucesso!")
+                            st.error("Preencha login e senha.")
+
+            # --- LISTA E EDIÇÃO DE USUÁRIOS ---
+            st.divider()
+            st.subheader("Usuários Cadastrados")
+            
+            if not df_usuarios.empty:
+                # Variáveis de controle de edição de usuários
+                if 'modo_edicao_user' not in st.session_state:
+                    st.session_state['modo_edicao_user'] = False
+                if 'id_editar_user' not in st.session_state:
+                    st.session_state['id_editar_user'] = None
+
+                # MODO DE VISUALIZAÇÃO DE USUÁRIOS
+                if not st.session_state['modo_edicao_user']:
+                    df_exibicao_user = df_usuarios.copy()
+                    df_exibicao_user.insert(0, "Selecionar", False)
+                    
+                    colunas_user = ['Selecionar', 'login', 'senha', 'perfil']
+                    
+                    tabela_users = st.data_editor(
+                        df_exibicao_user[colunas_user],
+                        hide_index=True,
+                        disabled=['login', 'senha', 'perfil'], # Bloqueia digitação direta
+                        use_container_width=True,
+                        column_config={
+                            "Selecionar": st.column_config.CheckboxColumn("✓", width="small"),
+                            "login": st.column_config.TextColumn("Login/Usuário"),
+                            "senha": st.column_config.TextColumn("Senha Atual"), 
+                            "perfil": st.column_config.TextColumn("Perfil de Acesso")
+                        }
+                    )
+                    
+                    linhas_selecionadas_user = tabela_users[tabela_users['Selecionar'] == True]
+                    
+                    col_u1, col_u2 = st.columns(2)
+                    with col_u1:
+                        if st.button("🗑️ EXCLUIR USUÁRIO"):
+                            if not linhas_selecionadas_user.empty:
+                                for index, row in linhas_selecionadas_user.iterrows():
+                                    if row['login'] == 'admin':
+                                        st.error("⚠️ Não é possível excluir o usuário Administrador Principal ('admin').")
+                                    else:
+                                        supabase.table('usuarios').delete().eq('login', row['login']).execute()
+                                st.success("✅ Ação concluída!")
+                                time.sleep(2)
+                                st.rerun()
+                            else:
+                                st.warning("Selecione pelo menos um usuário marcando a caixa.")
+                                
+                    with col_u2:
+                        if st.button("✏️ EDITAR USUÁRIO"):
+                            if len(linhas_selecionadas_user) == 1:
+                                if linhas_selecionadas_user.iloc[0]['login'] == 'admin':
+                                    st.warning("⚠️ O login 'admin' é protegido e não pode ser editado.")
+                                else:
+                                    st.session_state['modo_edicao_user'] = True
+                                    st.session_state['id_editar_user'] = linhas_selecionadas_user.iloc[0]['login']
+                                    st.rerun()
+                            elif len(linhas_selecionadas_user) > 1:
+                                st.warning("Por favor, selecione apenas UM usuário para editar por vez.")
+                            else:
+                                st.warning("Selecione um usuário marcando a caixa para editar.")
+
+                # MODO DE EDIÇÃO DE USUÁRIO ATIVO
+                else:
+                    st.subheader("✏️ Alterar Senha ou Perfil")
+                    login_alvo = st.session_state['id_editar_user']
+                    df_editar_user = df_usuarios[df_usuarios['login'] == login_alvo].copy()
+                    
+                    df_editado_user = st.data_editor(
+                        df_editar_user[['login', 'senha', 'perfil']],
+                        hide_index=True,
+                        use_container_width=True,
+                        column_config={
+                            "login": st.column_config.TextColumn("Login (Não editável)", disabled=True), 
+                            "senha": st.column_config.TextColumn("Nova Senha"),
+                            "perfil": st.column_config.SelectboxColumn("Perfil", options=["Usuário", "Administrador"])
+                        }
+                    )
+                    
+                    col_salvar_u, col_cancelar_u = st.columns(2)
+                    with col_salvar_u:
+                        if st.button("💾 SALVAR ALTERAÇÃO"):
+                            linha_atualizada_u = df_editado_user.iloc[0]
+                            dados_atualizados_u = linha_atualizada_u.to_dict()
+                            
+                            supabase.table('usuarios').update(dados_atualizados_u).eq('login', login_alvo).execute()
+                            
+                            st.success("✅ Dados do usuário atualizados com sucesso!")
+                            st.session_state['modo_edicao_user'] = False
+                            st.session_state['id_editar_user'] = None
                             time.sleep(2)
                             st.rerun()
-                    else:
-                        st.error("Preencha login e senha.")
+                            
+                    with col_cancelar_u:
+                        if st.button("❌ CANCELAR"):
+                            st.session_state['modo_edicao_user'] = False
+                            st.session_state['id_editar_user'] = None
+                            st.rerun()
 
     # --- VISÃO DO USUÁRIO COMUM ---
     else:
