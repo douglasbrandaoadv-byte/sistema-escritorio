@@ -98,6 +98,7 @@ def tela_principal():
         if st.sidebar.button("Sair / Logout"):
             st.session_state['usuario_logado'] = None
             st.session_state['perfil_usuario'] = None
+            if 'modo_edicao' in st.session_state: del st.session_state['modo_edicao']
             st.rerun()
 
         # 1. PAINEL DE PRAZOS
@@ -106,9 +107,106 @@ def tela_principal():
             
             if not df_prazos.empty:
                 df_prazos_ordenado = df_prazos.sort_values(by='data_fim', ascending=True)
-                df_exibicao = formatar_tabela_exibicao(df_prazos_ordenado)
-                colunas_mostrar = ['id_prazo', 'processo', 'orgao_ente', 'data_inicio', 'data_fim', 'responsavel', 'urgente', 'status']
-                st.dataframe(df_exibicao[colunas_mostrar], use_container_width=True)
+                
+                # Variáveis de memória para controlar o modo de edição
+                if 'modo_edicao' not in st.session_state:
+                    st.session_state['modo_edicao'] = False
+                if 'id_editar' not in st.session_state:
+                    st.session_state['id_editar'] = None
+
+                # ---- MODO DE VISUALIZAÇÃO E SELEÇÃO ----
+                if not st.session_state['modo_edicao']:
+                    st.write("Marque a caixa de seleção na primeira coluna para Excluir ou Editar um registro.")
+                    
+                    df_exibicao = formatar_tabela_exibicao(df_prazos_ordenado)
+                    # Cria a coluna de Caixas de Seleção
+                    df_exibicao.insert(0, "Selecionar", False) 
+                    
+                    colunas_mostrar = ['Selecionar', 'id_prazo', 'processo', 'orgao_ente', 'data_inicio', 'data_fim', 'responsavel', 'urgente', 'status']
+                    
+                    # Exibe a tabela interativa (bloqueada, exceto para marcar a caixinha)
+                    tabela_interativa = st.data_editor(
+                        df_exibicao[colunas_mostrar],
+                        hide_index=True,
+                        disabled=['id_prazo', 'processo', 'orgao_ente', 'data_inicio', 'data_fim', 'responsavel', 'urgente', 'status'],
+                        use_container_width=True
+                    )
+                    
+                    # Descobre quais linhas o usuário marcou com o 'check'
+                    linhas_selecionadas = tabela_interativa[tabela_interativa['Selecionar'] == True]
+                    
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        if st.button("🗑️ EXCLUIR"):
+                            if not linhas_selecionadas.empty:
+                                for index, row in linhas_selecionadas.iterrows():
+                                    supabase.table('prazos').delete().eq('id_prazo', row['id_prazo']).execute()
+                                st.success("✅ Registros excluídos com sucesso!")
+                                time.sleep(2)
+                                st.rerun()
+                            else:
+                                st.warning("Selecione pelo menos uma linha marcando a caixa de seleção.")
+                                
+                    with col2:
+                        if st.button("✏️ EDITAR"):
+                            if len(linhas_selecionadas) == 1:
+                                # Ativa o modo de edição para aquela linha específica
+                                st.session_state['modo_edicao'] = True
+                                st.session_state['id_editar'] = linhas_selecionadas.iloc[0]['id_prazo']
+                                st.rerun()
+                            elif len(linhas_selecionadas) > 1:
+                                st.warning("Por favor, selecione apenas UMA linha para editar por vez.")
+                            else:
+                                st.warning("Selecione uma linha marcando a caixa de seleção para editar.")
+                
+                # ---- MODO DE EDIÇÃO ATIVO ----
+                else:
+                    st.subheader("✏️ Edição Rápida")
+                    st.write("Altere os valores diretamente nas células da tabela abaixo e clique em Salvar.")
+                    
+                    id_alvo = st.session_state['id_editar']
+                    # Pega a linha crua do banco de dados
+                    df_editar = df_prazos[df_prazos['id_prazo'] == id_alvo].copy()
+                    
+                    colunas_editaveis = ['processo', 'nome_tarefa', 'orgao_ente', 'tarefa', 'data_inicio', 'data_fim', 'responsavel', 'urgente', 'status', 'vinculado']
+                    lista_usuarios = df_usuarios['login'].tolist() if not df_usuarios.empty else ["admin"]
+                    
+                    # Exibe apenas a linha selecionada, mas agora 100% editável!
+                    df_editado = st.data_editor(
+                        df_editar[colunas_editaveis],
+                        hide_index=True,
+                        use_container_width=True,
+                        column_config={
+                            "responsavel": st.column_config.SelectboxColumn("Responsável", options=lista_usuarios),
+                            "status": st.column_config.SelectboxColumn("Status", options=["Ativo", "Concluído", "Pendente de Revisão", "Arquivado"]),
+                            "urgente": st.column_config.SelectboxColumn("Urgente", options=["Sim", "Não"]),
+                            "vinculado": st.column_config.SelectboxColumn("Vinculado", options=["Sim", "Não"])
+                        }
+                    )
+                    
+                    col_salvar, col_cancelar = st.columns(2)
+                    with col_salvar:
+                        if st.button("💾 SALVAR"):
+                            # Pega os novos dados da célula e transforma em dicionário para o banco
+                            linha_atualizada = df_editado.iloc[0]
+                            dados_atualizados = linha_atualizada.to_dict()
+                            
+                            # Atualiza no Supabase
+                            supabase.table('prazos').update(dados_atualizados).eq('id_prazo', id_alvo).execute()
+                            
+                            st.success("✅ Cadastro alterado com sucesso!")
+                            # Desliga o modo de edição
+                            st.session_state['modo_edicao'] = False
+                            st.session_state['id_editar'] = None
+                            time.sleep(2)
+                            st.rerun()
+                            
+                    with col_cancelar:
+                        if st.button("❌ CANCELAR"):
+                            st.session_state['modo_edicao'] = False
+                            st.session_state['id_editar'] = None
+                            st.rerun()
+
             else:
                 st.info("Nenhum prazo cadastrado no sistema ainda.")
 
