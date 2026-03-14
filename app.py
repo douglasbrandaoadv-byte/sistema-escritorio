@@ -16,8 +16,9 @@ def inicializar_banco():
         pd.DataFrame(columns=['id_processo', 'tipo', 'numero', 'cliente']).to_csv(ARQUIVO_PROCESSOS, index=False)
         
     if not os.path.exists(ARQUIVO_PRAZOS):
+        # Adicionada a coluna 'nome_tarefa' ao banco de dados
         pd.DataFrame(columns=[
-            'id_prazo', 'processo', 'orgao_ente', 'tarefa', 
+            'id_prazo', 'processo', 'nome_tarefa', 'orgao_ente', 'tarefa', 
             'data_inicio', 'data_fim', 'responsavel', 'urgente', 'status', 'vinculado'
         ]).to_csv(ARQUIVO_PRAZOS, index=False)
 
@@ -26,6 +27,16 @@ def carregar_dados(arquivo):
 
 def salvar_dados(df, arquivo):
     df.to_csv(arquivo, index=False)
+
+# Função auxiliar para formatar a tabela antes de exibir
+def formatar_tabela_exibicao(df):
+    df_exibicao = df.copy()
+    # Se não for vinculado, a coluna processo recebe o nome da tarefa. Senão, mantém o número.
+    df_exibicao['processo'] = df_exibicao.apply(
+        lambda row: row['nome_tarefa'] if row['vinculado'] == 'Não' else row['processo'], 
+        axis=1
+    )
+    return df_exibicao
 
 inicializar_banco()
 
@@ -94,11 +105,14 @@ def tela_principal():
             st.write("Lista cronológica de todos os prazos cadastrados no sistema.")
             
             if not df_prazos.empty:
-                # Ordena os prazos pela data final (ordem cronológica)
                 df_prazos_ordenado = df_prazos.sort_values(by='data_fim', ascending=True)
                 
-                # Exibe a tabela completa com todas as informações
-                st.dataframe(df_prazos_ordenado, use_container_width=True)
+                # Aplica a regra visual de trocar número por nome da tarefa se não tiver vínculo
+                df_exibicao = formatar_tabela_exibicao(df_prazos_ordenado)
+                
+                # Exclui a coluna "tarefa" (diligência) da lista de exibição
+                colunas_mostrar = ['id_prazo', 'processo', 'orgao_ente', 'data_inicio', 'data_fim', 'responsavel', 'urgente', 'status']
+                st.dataframe(df_exibicao[colunas_mostrar], use_container_width=True)
             else:
                 st.info("Nenhum prazo cadastrado no sistema ainda.")
 
@@ -110,7 +124,9 @@ def tela_principal():
             df_revisao = df_prazos[df_prazos['status'] == 'Pendente de Revisão']
             
             if not df_revisao.empty:
-                st.dataframe(df_revisao, use_container_width=True)
+                df_exibicao = formatar_tabela_exibicao(df_revisao)
+                colunas_mostrar = ['id_prazo', 'processo', 'orgao_ente', 'data_fim', 'responsavel', 'urgente']
+                st.dataframe(df_exibicao[colunas_mostrar], use_container_width=True)
                 
                 st.divider()
                 st.subheader("Revisar Tarefa")
@@ -130,11 +146,15 @@ def tela_principal():
         elif menu_admin == "Cadastrar Prazo/Diligência":
             st.header("Cadastrar Novo Prazo / Diligência")
             
-            processo = st.text_input("Nome ou Número do Processo (Opcional se não for vincular):")
+            # Novo rótulo conforme solicitado
+            processo = st.text_input("Número do Processo (Opcional se não for vincular):")
             vincular = st.checkbox("Vincular Tarefa/Prazo ao Processo")
             
+            # Novo campo Nome da Tarefa
+            nome_tarefa = st.text_input("Nome da Tarefa (Ex: Protocolar Petição, Buscar Documento):")
+            
             orgao = st.text_input("Órgão / Ente (Ex: 1ª Vara Cível, INSS, etc.):")
-            tarefa = st.text_area("Descrição da Tarefa / Diligência:")
+            tarefa = st.text_area("Descrição detalhada da Tarefa / Diligência:")
             
             col1, col2 = st.columns(2)
             with col1:
@@ -146,19 +166,19 @@ def tela_principal():
             urgente = st.checkbox("🚨 URGENTE")
             
             if st.button("CADASTRAR"):
-                if tarefa == "":
-                    st.error("A descrição da Tarefa/Diligência é obrigatória.")
+                if nome_tarefa == "":
+                    st.error("O 'Nome da Tarefa' é obrigatório.")
                 elif vincular and processo == "":
-                    st.error("Para vincular, você precisa digitar o Nome ou Número do Processo acima.")
+                    st.error("Para vincular, você precisa digitar o Número do Processo acima.")
                 else:
                     novo_id = f"PZ-{len(df_prazos) + 1}"
                     
-                    # Se não for vincular, podemos deixar o campo processo visualmente mais limpo
-                    processo_salvar = processo if vincular else (processo if processo else "Não vinculado")
+                    processo_salvar = processo if vincular else "Não vinculado"
                     
                     novo_prazo = pd.DataFrame([{
                         'id_prazo': novo_id, 
                         'processo': processo_salvar, 
+                        'nome_tarefa': nome_tarefa,
                         'orgao_ente': orgao,
                         'tarefa': tarefa, 
                         'data_inicio': data_inicio, 
@@ -225,7 +245,9 @@ def tela_principal():
                             ]
                             
                             if not prazos_vinculados.empty:
-                                st.dataframe(prazos_vinculados[['tarefa', 'responsavel', 'data_fim', 'status', 'urgente']], use_container_width=True)
+                                df_exibicao_hist = formatar_tabela_exibicao(prazos_vinculados)
+                                colunas_mostrar_hist = ['nome_tarefa', 'responsavel', 'data_fim', 'status', 'urgente']
+                                st.dataframe(df_exibicao_hist[colunas_mostrar_hist], use_container_width=True)
                             else:
                                 st.write("📝 *Nenhuma tarefa vinculada a este processo.*")
 
@@ -268,16 +290,17 @@ def tela_principal():
             meus_prazos = df_prazos[(df_prazos['responsavel'] == st.session_state['usuario_logado']) & (df_prazos['status'] == 'Ativo')]
             
             if not meus_prazos.empty:
-                # Ordena para o usuário também ver o que vence primeiro
                 meus_prazos = meus_prazos.sort_values(by='data_fim')
+                df_exibicao = formatar_tabela_exibicao(meus_prazos)
                 
-                st.dataframe(meus_prazos[['id_prazo', 'processo', 'orgao_ente', 'tarefa', 'data_inicio', 'data_fim', 'urgente']], use_container_width=True)
+                # Exclui a descrição longa
+                colunas_mostrar = ['id_prazo', 'processo', 'orgao_ente', 'data_inicio', 'data_fim', 'urgente']
+                st.dataframe(df_exibicao[colunas_mostrar], use_container_width=True)
                 
                 st.divider()
                 st.subheader("Entregar Tarefa / Diligência")
                 tarefa_concluida = st.selectbox("Selecione o ID da tarefa que você finalizou:", meus_prazos['id_prazo'].tolist())
                 
-                # Botão para o usuário mudar o status
                 if st.button("Enviar para Revisão do Administrador"):
                     df_prazos.loc[df_prazos['id_prazo'] == tarefa_concluida, 'status'] = 'Pendente de Revisão'
                     salvar_dados(df_prazos, ARQUIVO_PRAZOS)
@@ -289,12 +312,14 @@ def tela_principal():
         # TELA 2 DO USUÁRIO: PENDENTE DE REVISÃO
         elif menu_user == "Pendente de Revisão":
             st.header("Minhas Tarefas em Revisão")
-            st.write("Acompanhe aqui as tarefas que você já entregou e que estão aguardando aprovação.")
+            st.write("Acompanhe aqui as tarefas que você já entregou e aguardam aprovação.")
             
             minhas_revisoes = df_prazos[(df_prazos['responsavel'] == st.session_state['usuario_logado']) & (df_prazos['status'] == 'Pendente de Revisão')]
             
             if not minhas_revisoes.empty:
-                st.dataframe(minhas_revisoes[['id_prazo', 'processo', 'tarefa', 'data_fim', 'urgente']], use_container_width=True)
+                df_exibicao = formatar_tabela_exibicao(minhas_revisoes)
+                colunas_mostrar = ['id_prazo', 'processo', 'data_fim', 'urgente']
+                st.dataframe(df_exibicao[colunas_mostrar], use_container_width=True)
             else:
                 st.info("Você não tem nenhuma tarefa aguardando revisão.")
 
