@@ -32,7 +32,7 @@ def carregar_processos():
 def carregar_prazos():
     res = supabase.table('prazos').select("*").execute()
     if not res.data:
-        return pd.DataFrame(columns=['id_prazo', 'processo', 'nome_tarefa', 'orgao_ente', 'tarefa', 'data_inicio', 'data_fim', 'responsavel', 'urgente', 'status', 'vinculado'])
+        return pd.DataFrame(columns=['id_prazo', 'processo', 'nome_cliente', 'nome_tarefa', 'orgao_ente', 'tarefa', 'data_inicio', 'data_fim', 'responsavel', 'urgente', 'status', 'vinculado'])
     return pd.DataFrame(res.data)
 
 # Função auxiliar para visualização limpa
@@ -86,6 +86,7 @@ def tela_principal():
     df_processos = carregar_processos()
     df_prazos = carregar_prazos()
     df_usuarios = carregar_usuarios()
+    lista_usuarios = df_usuarios['login'].tolist() if not df_usuarios.empty else ["admin"]
 
     # --- VISÃO DO ADMINISTRADOR ---
     if st.session_state['perfil_usuario'] == 'Administrador':
@@ -106,58 +107,85 @@ def tela_principal():
             st.header("Painel Geral de Prazos")
             
             if not df_prazos.empty:
-                df_prazos_ordenado = df_prazos.sort_values(by='data_fim', ascending=True)
+                # --- SISTEMA DE FILTROS ---
+                with st.expander("🔍 Filtros de Busca", expanded=True):
+                    col_f1, col_f2, col_f3, col_f4 = st.columns(4)
+                    with col_f1:
+                        filtro_busca = st.text_input("Buscar Processo / Cliente / Tarefa:")
+                    with col_f2:
+                        filtro_resp = st.multiselect("Responsável:", options=lista_usuarios)
+                    with col_f3:
+                        filtro_status = st.multiselect("Status:", options=["Ativo", "Concluído", "Pendente de Revisão", "Arquivado"], default=["Ativo", "Pendente de Revisão"])
+                    with col_f4:
+                        filtro_urgente = st.multiselect("Urgente:", options=["Sim", "Não"])
                 
-                # Variáveis de memória para controlar o modo de edição
+                # Aplica os filtros na base de dados
+                df_filtrado = df_prazos.copy()
+                
+                if filtro_busca:
+                    df_filtrado = df_filtrado[
+                        df_filtrado['processo'].astype(str).str.contains(filtro_busca, case=False, na=False) |
+                        df_filtrado['nome_tarefa'].astype(str).str.contains(filtro_busca, case=False, na=False) |
+                        df_filtrado['nome_cliente'].astype(str).str.contains(filtro_busca, case=False, na=False)
+                    ]
+                if filtro_resp:
+                    df_filtrado = df_filtrado[df_filtrado['responsavel'].isin(filtro_resp)]
+                if filtro_status:
+                    df_filtrado = df_filtrado[df_filtrado['status'].isin(filtro_status)]
+                if filtro_urgente:
+                    df_filtrado = df_filtrado[df_filtrado['urgente'].isin(filtro_urgente)]
+
+                df_prazos_ordenado = df_filtrado.sort_values(by='data_fim', ascending=True)
+
                 if 'modo_edicao' not in st.session_state:
                     st.session_state['modo_edicao'] = False
                 if 'id_editar' not in st.session_state:
                     st.session_state['id_editar'] = None
 
-                # ---- MODO DE VISUALIZAÇÃO E SELEÇÃO ----
+                # ---- MODO DE VISUALIZAÇÃO ----
                 if not st.session_state['modo_edicao']:
                     st.write("Marque a caixa de seleção na primeira coluna para Excluir ou Editar um registro.")
                     
-                    df_exibicao = formatar_tabela_exibicao(df_prazos_ordenado)
-                    # Cria a coluna de Caixas de Seleção
-                    df_exibicao.insert(0, "Selecionar", False) 
-                    
-                    colunas_mostrar = ['Selecionar', 'id_prazo', 'processo', 'orgao_ente', 'data_inicio', 'data_fim', 'responsavel', 'urgente', 'status']
-                    
-                    # Exibe a tabela interativa (bloqueada, exceto para marcar a caixinha)
-                    tabela_interativa = st.data_editor(
-                        df_exibicao[colunas_mostrar],
-                        hide_index=True,
-                        disabled=['id_prazo', 'processo', 'orgao_ente', 'data_inicio', 'data_fim', 'responsavel', 'urgente', 'status'],
-                        use_container_width=True
-                    )
-                    
-                    # Descobre quais linhas o usuário marcou com o 'check'
-                    linhas_selecionadas = tabela_interativa[tabela_interativa['Selecionar'] == True]
-                    
-                    col1, col2 = st.columns(2)
-                    with col1:
-                        if st.button("🗑️ EXCLUIR"):
-                            if not linhas_selecionadas.empty:
-                                for index, row in linhas_selecionadas.iterrows():
-                                    supabase.table('prazos').delete().eq('id_prazo', row['id_prazo']).execute()
-                                st.success("✅ Registros excluídos com sucesso!")
-                                time.sleep(2)
-                                st.rerun()
-                            else:
-                                st.warning("Selecione pelo menos uma linha marcando a caixa de seleção.")
-                                
-                    with col2:
-                        if st.button("✏️ EDITAR"):
-                            if len(linhas_selecionadas) == 1:
-                                # Ativa o modo de edição para aquela linha específica
-                                st.session_state['modo_edicao'] = True
-                                st.session_state['id_editar'] = linhas_selecionadas.iloc[0]['id_prazo']
-                                st.rerun()
-                            elif len(linhas_selecionadas) > 1:
-                                st.warning("Por favor, selecione apenas UMA linha para editar por vez.")
-                            else:
-                                st.warning("Selecione uma linha marcando a caixa de seleção para editar.")
+                    if df_prazos_ordenado.empty:
+                        st.warning("Nenhuma tarefa encontrada com os filtros selecionados.")
+                    else:
+                        df_exibicao = formatar_tabela_exibicao(df_prazos_ordenado)
+                        df_exibicao.insert(0, "Selecionar", False) 
+                        
+                        # Coluna nome_cliente adicionada à exibição principal
+                        colunas_mostrar = ['Selecionar', 'id_prazo', 'nome_cliente', 'processo', 'orgao_ente', 'data_inicio', 'data_fim', 'responsavel', 'urgente', 'status']
+                        
+                        tabela_interativa = st.data_editor(
+                            df_exibicao[colunas_mostrar],
+                            hide_index=True,
+                            disabled=['id_prazo', 'nome_cliente', 'processo', 'orgao_ente', 'data_inicio', 'data_fim', 'responsavel', 'urgente', 'status'],
+                            use_container_width=True
+                        )
+                        
+                        linhas_selecionadas = tabela_interativa[tabela_interativa['Selecionar'] == True]
+                        
+                        col1, col2 = st.columns(2)
+                        with col1:
+                            if st.button("🗑️ EXCLUIR"):
+                                if not linhas_selecionadas.empty:
+                                    for index, row in linhas_selecionadas.iterrows():
+                                        supabase.table('prazos').delete().eq('id_prazo', row['id_prazo']).execute()
+                                    st.success("✅ Registros excluídos com sucesso!")
+                                    time.sleep(2)
+                                    st.rerun()
+                                else:
+                                    st.warning("Selecione pelo menos uma linha marcando a caixa de seleção.")
+                                    
+                        with col2:
+                            if st.button("✏️ EDITAR"):
+                                if len(linhas_selecionadas) == 1:
+                                    st.session_state['modo_edicao'] = True
+                                    st.session_state['id_editar'] = linhas_selecionadas.iloc[0]['id_prazo']
+                                    st.rerun()
+                                elif len(linhas_selecionadas) > 1:
+                                    st.warning("Por favor, selecione apenas UMA linha para editar por vez.")
+                                else:
+                                    st.warning("Selecione uma linha marcando a caixa de seleção para editar.")
                 
                 # ---- MODO DE EDIÇÃO ATIVO ----
                 else:
@@ -165,13 +193,11 @@ def tela_principal():
                     st.write("Altere os valores diretamente nas células da tabela abaixo e clique em Salvar.")
                     
                     id_alvo = st.session_state['id_editar']
-                    # Pega a linha crua do banco de dados
                     df_editar = df_prazos[df_prazos['id_prazo'] == id_alvo].copy()
                     
-                    colunas_editaveis = ['processo', 'nome_tarefa', 'orgao_ente', 'tarefa', 'data_inicio', 'data_fim', 'responsavel', 'urgente', 'status', 'vinculado']
-                    lista_usuarios = df_usuarios['login'].tolist() if not df_usuarios.empty else ["admin"]
+                    # Coluna nome_cliente adicionada para edição
+                    colunas_editaveis = ['nome_cliente', 'processo', 'nome_tarefa', 'orgao_ente', 'tarefa', 'data_inicio', 'data_fim', 'responsavel', 'urgente', 'status', 'vinculado']
                     
-                    # Exibe apenas a linha selecionada, mas agora 100% editável!
                     df_editado = st.data_editor(
                         df_editar[colunas_editaveis],
                         hide_index=True,
@@ -187,15 +213,12 @@ def tela_principal():
                     col_salvar, col_cancelar = st.columns(2)
                     with col_salvar:
                         if st.button("💾 SALVAR"):
-                            # Pega os novos dados da célula e transforma em dicionário para o banco
                             linha_atualizada = df_editado.iloc[0]
                             dados_atualizados = linha_atualizada.to_dict()
                             
-                            # Atualiza no Supabase
                             supabase.table('prazos').update(dados_atualizados).eq('id_prazo', id_alvo).execute()
                             
                             st.success("✅ Cadastro alterado com sucesso!")
-                            # Desliga o modo de edição
                             st.session_state['modo_edicao'] = False
                             st.session_state['id_editar'] = None
                             time.sleep(2)
@@ -206,7 +229,6 @@ def tela_principal():
                             st.session_state['modo_edicao'] = False
                             st.session_state['id_editar'] = None
                             st.rerun()
-
             else:
                 st.info("Nenhum prazo cadastrado no sistema ainda.")
 
@@ -218,7 +240,7 @@ def tela_principal():
             
             if not df_revisao.empty:
                 df_exibicao = formatar_tabela_exibicao(df_revisao)
-                colunas_mostrar = ['id_prazo', 'processo', 'orgao_ente', 'data_fim', 'responsavel', 'urgente']
+                colunas_mostrar = ['id_prazo', 'nome_cliente', 'processo', 'orgao_ente', 'data_fim', 'responsavel', 'urgente']
                 st.dataframe(df_exibicao[colunas_mostrar], use_container_width=True)
                 
                 st.divider()
@@ -242,9 +264,12 @@ def tela_principal():
             st.header("Cadastrar Novo Prazo / Diligência")
             
             with st.form("form_novo_prazo", clear_on_submit=True):
+                # Novo campo obrigatório
+                nome_cliente = st.text_input("Nome do Cliente (*Obrigatório):")
+                
                 processo = st.text_input("Número do Processo (Opcional se não for vincular):")
                 vincular = st.checkbox("Vincular Tarefa/Prazo ao Processo")
-                nome_tarefa = st.text_input("Nome da Tarefa (Ex: Protocolar Petição, Buscar Documento):")
+                nome_tarefa = st.text_input("Nome da Tarefa (*Obrigatório - Ex: Protocolar Petição, Buscar Documento):")
                 orgao = st.text_input("Órgão / Ente (Ex: 1ª Vara Cível, INSS, etc.):")
                 tarefa = st.text_area("Descrição detalhada da Tarefa / Diligência:")
                 
@@ -252,15 +277,15 @@ def tela_principal():
                 with col1: data_inicio = st.date_input("Data de Início da Tarefa:")
                 with col2: data_fim = st.date_input("Data Final / Prazo Fatal:")
                     
-                lista_usuarios = df_usuarios['login'].tolist() if not df_usuarios.empty else ["admin"]
                 responsavel = st.selectbox("Atribuir Tarefa ao Usuário:", lista_usuarios)
                 urgente = st.checkbox("🚨 URGENTE")
                 
                 submit_prazo = st.form_submit_button("CADASTRAR")
                 
                 if submit_prazo:
-                    if nome_tarefa == "":
-                        st.error("O 'Nome da Tarefa' é obrigatório.")
+                    # Nova validação incluindo o nome do cliente
+                    if nome_cliente == "" or nome_tarefa == "":
+                        st.error("Os campos 'Nome do Cliente' e 'Nome da Tarefa' são obrigatórios.")
                     elif vincular and processo == "":
                         st.error("Para vincular, você precisa digitar o Número do Processo acima.")
                     else:
@@ -268,7 +293,7 @@ def tela_principal():
                         processo_salvar = processo if vincular else "Não vinculado"
                         
                         dados_prazo = {
-                            'id_prazo': novo_id, 'processo': processo_salvar, 'nome_tarefa': nome_tarefa,
+                            'id_prazo': novo_id, 'processo': processo_salvar, 'nome_cliente': nome_cliente, 'nome_tarefa': nome_tarefa,
                             'orgao_ente': orgao, 'tarefa': tarefa, 'data_inicio': str(data_inicio), 
                             'data_fim': str(data_fim), 'responsavel': responsavel, 
                             'urgente': "Sim" if urgente else "Não", 'status': 'Ativo', 'vinculado': "Sim" if vincular else "Não"
@@ -377,7 +402,7 @@ def tela_principal():
             if not meus_prazos.empty:
                 meus_prazos = meus_prazos.sort_values(by='data_fim')
                 df_exibicao = formatar_tabela_exibicao(meus_prazos)
-                colunas_mostrar = ['id_prazo', 'processo', 'orgao_ente', 'data_inicio', 'data_fim', 'urgente']
+                colunas_mostrar = ['id_prazo', 'nome_cliente', 'processo', 'orgao_ente', 'data_inicio', 'data_fim', 'urgente']
                 st.dataframe(df_exibicao[colunas_mostrar], use_container_width=True)
                 
                 st.divider()
@@ -400,7 +425,7 @@ def tela_principal():
             
             if not minhas_revisoes.empty:
                 df_exibicao = formatar_tabela_exibicao(minhas_revisoes)
-                colunas_mostrar = ['id_prazo', 'processo', 'data_fim', 'urgente']
+                colunas_mostrar = ['id_prazo', 'nome_cliente', 'processo', 'data_fim', 'urgente']
                 st.dataframe(df_exibicao[colunas_mostrar], use_container_width=True)
             else:
                 st.info("Você não tem nenhuma tarefa aguardando revisão.")
