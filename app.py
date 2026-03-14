@@ -35,7 +35,6 @@ def carregar_prazos():
         return pd.DataFrame(columns=['id_prazo', 'processo', 'nome_cliente', 'nome_tarefa', 'orgao_ente', 'tarefa', 'data_inicio', 'data_fim', 'responsavel', 'urgente', 'status', 'vinculado'])
     return pd.DataFrame(res.data)
 
-# Função auxiliar para visualização limpa
 def formatar_tabela_exibicao(df):
     df_exibicao = df.copy()
     if not df_exibicao.empty:
@@ -44,6 +43,20 @@ def formatar_tabela_exibicao(df):
             axis=1
         )
     return df_exibicao
+
+# --- DICIONÁRIO DE ESTÉTICA DAS TABELAS (NOVIDADE) ---
+# Isso organiza visualmente todas as tabelas do sistema
+config_visual_colunas = {
+    "id_prazo": None, # Isso ESCONDE o ID da tela, mas mantém no código!
+    "Selecionar": st.column_config.CheckboxColumn("✓", width="small"),
+    "nome_cliente": st.column_config.TextColumn("Cliente", width="medium"),
+    "processo": st.column_config.TextColumn("Processo / Tarefa", width="large"),
+    "orgao_ente": st.column_config.TextColumn("Órgão", width="medium"),
+    "data_fim": st.column_config.TextColumn("Prazo Final", width="small"),
+    "responsavel": st.column_config.TextColumn("Responsável", width="small"),
+    "urgente": st.column_config.TextColumn("Urgente", width="small"),
+    "status": st.column_config.TextColumn("Status", width="small")
+}
 
 # --- CRIAÇÃO DO PRIMEIRO ADMIN ---
 df_check_admin = carregar_usuarios()
@@ -107,7 +120,6 @@ def tela_principal():
             st.header("Painel Geral de Prazos")
             
             if not df_prazos.empty:
-                # --- SISTEMA DE FILTROS ---
                 with st.expander("🔍 Filtros de Busca", expanded=True):
                     col_f1, col_f2, col_f3, col_f4 = st.columns(4)
                     with col_f1:
@@ -119,7 +131,6 @@ def tela_principal():
                     with col_f4:
                         filtro_urgente = st.multiselect("Urgente:", options=["Sim", "Não"])
                 
-                # Aplica os filtros na base de dados
                 df_filtrado = df_prazos.copy()
                 
                 if filtro_busca:
@@ -152,14 +163,15 @@ def tela_principal():
                         df_exibicao = formatar_tabela_exibicao(df_prazos_ordenado)
                         df_exibicao.insert(0, "Selecionar", False) 
                         
-                        # Coluna nome_cliente adicionada à exibição principal
-                        colunas_mostrar = ['Selecionar', 'id_prazo', 'nome_cliente', 'processo', 'orgao_ente', 'data_inicio', 'data_fim', 'responsavel', 'urgente', 'status']
+                        # Data_inicio foi removida da lista abaixo
+                        colunas_mostrar = ['Selecionar', 'id_prazo', 'nome_cliente', 'processo', 'orgao_ente', 'data_fim', 'responsavel', 'urgente', 'status']
                         
                         tabela_interativa = st.data_editor(
                             df_exibicao[colunas_mostrar],
                             hide_index=True,
-                            disabled=['id_prazo', 'nome_cliente', 'processo', 'orgao_ente', 'data_inicio', 'data_fim', 'responsavel', 'urgente', 'status'],
-                            use_container_width=True
+                            disabled=['id_prazo', 'nome_cliente', 'processo', 'orgao_ente', 'data_fim', 'responsavel', 'urgente', 'status'],
+                            use_container_width=True,
+                            column_config=config_visual_colunas # Aplica o visual limpo
                         )
                         
                         linhas_selecionadas = tabela_interativa[tabela_interativa['Selecionar'] == True]
@@ -195,14 +207,17 @@ def tela_principal():
                     id_alvo = st.session_state['id_editar']
                     df_editar = df_prazos[df_prazos['id_prazo'] == id_alvo].copy()
                     
-                    # Coluna nome_cliente adicionada para edição
-                    colunas_editaveis = ['nome_cliente', 'processo', 'nome_tarefa', 'orgao_ente', 'tarefa', 'data_inicio', 'data_fim', 'responsavel', 'urgente', 'status', 'vinculado']
+                    colunas_editaveis = ['nome_cliente', 'processo', 'nome_tarefa', 'orgao_ente', 'tarefa', 'data_fim', 'responsavel', 'urgente', 'status', 'vinculado']
                     
                     df_editado = st.data_editor(
                         df_editar[colunas_editaveis],
                         hide_index=True,
                         use_container_width=True,
                         column_config={
+                            "nome_cliente": st.column_config.TextColumn("Cliente"),
+                            "processo": st.column_config.TextColumn("Processo / Tarefa"),
+                            "orgao_ente": st.column_config.TextColumn("Órgão"),
+                            "data_fim": st.column_config.TextColumn("Prazo Final"),
                             "responsavel": st.column_config.SelectboxColumn("Responsável", options=lista_usuarios),
                             "status": st.column_config.SelectboxColumn("Status", options=["Ativo", "Concluído", "Pendente de Revisão", "Arquivado"]),
                             "urgente": st.column_config.SelectboxColumn("Urgente", options=["Sim", "Não"]),
@@ -241,12 +256,16 @@ def tela_principal():
             if not df_revisao.empty:
                 df_exibicao = formatar_tabela_exibicao(df_revisao)
                 colunas_mostrar = ['id_prazo', 'nome_cliente', 'processo', 'orgao_ente', 'data_fim', 'responsavel', 'urgente']
-                st.dataframe(df_exibicao[colunas_mostrar], use_container_width=True)
+                st.dataframe(
+                    df_exibicao[colunas_mostrar], 
+                    use_container_width=True, hide_index=True,
+                    column_config=config_visual_colunas
+                )
                 
                 st.divider()
                 st.subheader("Revisar Tarefa")
                 with st.form("form_revisao", clear_on_submit=True):
-                    id_alvo = st.selectbox("Selecione o ID do Prazo para revisar:", df_revisao['id_prazo'].tolist())
+                    id_alvo = st.selectbox("Selecione o ID da Tarefa para revisar:", df_revisao['id_prazo'].tolist())
                     decisao = st.radio("Ação:", ["Aprovar (Marcar como Concluído)", "Recusar (Devolver para Ativo)"])
                     submit_revisao = st.form_submit_button("Confirmar Revisão")
                     
@@ -264,9 +283,7 @@ def tela_principal():
             st.header("Cadastrar Novo Prazo / Diligência")
             
             with st.form("form_novo_prazo", clear_on_submit=True):
-                # Novo campo obrigatório
                 nome_cliente = st.text_input("Nome do Cliente (*Obrigatório):")
-                
                 processo = st.text_input("Número do Processo (Opcional se não for vincular):")
                 vincular = st.checkbox("Vincular Tarefa/Prazo ao Processo")
                 nome_tarefa = st.text_input("Nome da Tarefa (*Obrigatório - Ex: Protocolar Petição, Buscar Documento):")
@@ -283,7 +300,6 @@ def tela_principal():
                 submit_prazo = st.form_submit_button("CADASTRAR")
                 
                 if submit_prazo:
-                    # Nova validação incluindo o nome do cliente
                     if nome_cliente == "" or nome_tarefa == "":
                         st.error("Os campos 'Nome do Cliente' e 'Nome da Tarefa' são obrigatórios.")
                     elif vincular and processo == "":
@@ -359,7 +375,11 @@ def tela_principal():
                                 if not prazos_vinc.empty:
                                     df_exibicao_hist = formatar_tabela_exibicao(prazos_vinc)
                                     col_hist = ['nome_tarefa', 'responsavel', 'data_fim', 'status', 'urgente']
-                                    st.dataframe(df_exibicao_hist[col_hist], use_container_width=True)
+                                    st.dataframe(
+                                        df_exibicao_hist[col_hist], 
+                                        use_container_width=True, hide_index=True,
+                                        column_config={"nome_tarefa": "Tarefa", "responsavel": "Responsável", "data_fim": "Prazo Final", "status": "Status", "urgente": "Urgente"}
+                                    )
                                 else:
                                     st.write("📝 *Nenhuma tarefa vinculada a este processo.*")
 
@@ -402,17 +422,24 @@ def tela_principal():
             if not meus_prazos.empty:
                 meus_prazos = meus_prazos.sort_values(by='data_fim')
                 df_exibicao = formatar_tabela_exibicao(meus_prazos)
-                colunas_mostrar = ['id_prazo', 'nome_cliente', 'processo', 'orgao_ente', 'data_inicio', 'data_fim', 'urgente']
-                st.dataframe(df_exibicao[colunas_mostrar], use_container_width=True)
+                colunas_mostrar = ['id_prazo', 'nome_cliente', 'processo', 'orgao_ente', 'data_fim', 'urgente']
+                st.dataframe(
+                    df_exibicao[colunas_mostrar], 
+                    use_container_width=True, hide_index=True,
+                    column_config=config_visual_colunas
+                )
                 
                 st.divider()
                 st.subheader("Entregar Tarefa / Diligência")
                 with st.form("form_entregar", clear_on_submit=True):
-                    tarefa_concluida = st.selectbox("Selecione o ID da tarefa que você finalizou:", meus_prazos['id_prazo'].tolist())
+                    # O usuário precisa saber o ID para entregar, então mostramos na lista suspensa
+                    opcoes_entrega = [f"{row['id_prazo']} - {row['nome_tarefa']}" for index, row in meus_prazos.iterrows()]
+                    tarefa_selecionada = st.selectbox("Selecione a tarefa que você finalizou:", opcoes_entrega)
                     submit_entregar = st.form_submit_button("Enviar para Revisão do Administrador")
                     
                     if submit_entregar:
-                        supabase.table('prazos').update({'status': 'Pendente de Revisão'}).eq('id_prazo', tarefa_concluida).execute()
+                        id_tarefa_concluida = tarefa_selecionada.split(" - ")[0]
+                        supabase.table('prazos').update({'status': 'Pendente de Revisão'}).eq('id_prazo', id_tarefa_concluida).execute()
                         st.success("✅ Tarefa enviada para revisão com sucesso!")
                         time.sleep(2)
                         st.rerun()
@@ -426,7 +453,11 @@ def tela_principal():
             if not minhas_revisoes.empty:
                 df_exibicao = formatar_tabela_exibicao(minhas_revisoes)
                 colunas_mostrar = ['id_prazo', 'nome_cliente', 'processo', 'data_fim', 'urgente']
-                st.dataframe(df_exibicao[colunas_mostrar], use_container_width=True)
+                st.dataframe(
+                    df_exibicao[colunas_mostrar], 
+                    use_container_width=True, hide_index=True,
+                    column_config=config_visual_colunas
+                )
             else:
                 st.info("Você não tem nenhuma tarefa aguardando revisão.")
 
