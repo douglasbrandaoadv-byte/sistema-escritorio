@@ -44,10 +44,9 @@ def formatar_tabela_exibicao(df):
         )
     return df_exibicao
 
-# --- DICIONÁRIO DE ESTÉTICA DAS TABELAS (NOVIDADE) ---
-# Isso organiza visualmente todas as tabelas do sistema
+# --- DICIONÁRIO DE ESTÉTICA DAS TABELAS ---
 config_visual_colunas = {
-    "id_prazo": None, # Isso ESCONDE o ID da tela, mas mantém no código!
+    "id_prazo": None, 
     "Selecionar": st.column_config.CheckboxColumn("✓", width="small"),
     "nome_cliente": st.column_config.TextColumn("Cliente", width="medium"),
     "processo": st.column_config.TextColumn("Processo / Tarefa", width="large"),
@@ -121,24 +120,33 @@ def tela_principal():
             
             if not df_prazos.empty:
                 with st.expander("🔍 Filtros de Busca", expanded=True):
-                    col_f1, col_f2, col_f3, col_f4 = st.columns(4)
+                    # Dividimos os filtros em duas linhas para ficar mais organizado
+                    col_f1, col_f2 = st.columns(2)
                     with col_f1:
-                        filtro_busca = st.text_input("Buscar Processo / Cliente / Tarefa:")
+                        filtro_cliente = st.text_input("Cliente:")
                     with col_f2:
-                        filtro_resp = st.multiselect("Responsável:", options=lista_usuarios)
+                        filtro_proc_tar = st.text_input("Processo/Tarefa:")
+                        
+                    col_f3, col_f4, col_f5 = st.columns(3)
                     with col_f3:
-                        filtro_status = st.multiselect("Status:", options=["Ativo", "Concluído", "Pendente de Revisão", "Arquivado"], default=["Ativo", "Pendente de Revisão"])
+                        filtro_resp = st.multiselect("Responsável:", options=lista_usuarios)
                     with col_f4:
+                        filtro_status = st.multiselect("Status:", options=["Ativo", "Concluído", "Pendente de Revisão", "Arquivado"], default=["Ativo", "Pendente de Revisão"])
+                    with col_f5:
                         filtro_urgente = st.multiselect("Urgente:", options=["Sim", "Não"])
                 
                 df_filtrado = df_prazos.copy()
                 
-                if filtro_busca:
+                # Aplicando os novos filtros separados
+                if filtro_cliente:
+                    df_filtrado = df_filtrado[df_filtrado['nome_cliente'].astype(str).str.contains(filtro_cliente, case=False, na=False)]
+                
+                if filtro_proc_tar:
                     df_filtrado = df_filtrado[
-                        df_filtrado['processo'].astype(str).str.contains(filtro_busca, case=False, na=False) |
-                        df_filtrado['nome_tarefa'].astype(str).str.contains(filtro_busca, case=False, na=False) |
-                        df_filtrado['nome_cliente'].astype(str).str.contains(filtro_busca, case=False, na=False)
+                        df_filtrado['processo'].astype(str).str.contains(filtro_proc_tar, case=False, na=False) |
+                        df_filtrado['nome_tarefa'].astype(str).str.contains(filtro_proc_tar, case=False, na=False)
                     ]
+                    
                 if filtro_resp:
                     df_filtrado = df_filtrado[df_filtrado['responsavel'].isin(filtro_resp)]
                 if filtro_status:
@@ -155,7 +163,7 @@ def tela_principal():
 
                 # ---- MODO DE VISUALIZAÇÃO ----
                 if not st.session_state['modo_edicao']:
-                    st.write("Marque a caixa de seleção na primeira coluna para Excluir ou Editar um registro.")
+                    st.write("Marque a caixa de seleção na primeira coluna para Excluir, Editar ou Ver Detalhes.")
                     
                     if df_prazos_ordenado.empty:
                         st.warning("Nenhuma tarefa encontrada com os filtros selecionados.")
@@ -163,7 +171,6 @@ def tela_principal():
                         df_exibicao = formatar_tabela_exibicao(df_prazos_ordenado)
                         df_exibicao.insert(0, "Selecionar", False) 
                         
-                        # Data_inicio foi removida da lista abaixo
                         colunas_mostrar = ['Selecionar', 'id_prazo', 'nome_cliente', 'processo', 'orgao_ente', 'data_fim', 'responsavel', 'urgente', 'status']
                         
                         tabela_interativa = st.data_editor(
@@ -171,7 +178,7 @@ def tela_principal():
                             hide_index=True,
                             disabled=['id_prazo', 'nome_cliente', 'processo', 'orgao_ente', 'data_fim', 'responsavel', 'urgente', 'status'],
                             use_container_width=True,
-                            column_config=config_visual_colunas # Aplica o visual limpo
+                            column_config=config_visual_colunas
                         )
                         
                         linhas_selecionadas = tabela_interativa[tabela_interativa['Selecionar'] == True]
@@ -198,6 +205,39 @@ def tela_principal():
                                     st.warning("Por favor, selecione apenas UMA linha para editar por vez.")
                                 else:
                                     st.warning("Selecione uma linha marcando a caixa de seleção para editar.")
+
+                        # --- NOVA ÁREA: DETALHES DA SELEÇÃO ---
+                        if not linhas_selecionadas.empty:
+                            st.divider()
+                            st.subheader("📄 Detalhes do Registro Selecionado")
+                            
+                            for index, row in linhas_selecionadas.iterrows():
+                                # Busca os dados completos originais no banco carregado
+                                id_sel = row['id_prazo']
+                                dados_completos = df_prazos[df_prazos['id_prazo'] == id_sel].iloc[0]
+                                
+                                # Verifica se tem alerta de urgência para o título
+                                icone_urgente = "🚨 " if dados_completos['urgente'] == "Sim" else "📁 "
+                                
+                                with st.expander(f"{icone_urgente} {dados_completos['nome_tarefa']} | Cliente: {dados_completos['nome_cliente']}", expanded=True):
+                                    col_d1, col_d2 = st.columns(2)
+                                    with col_d1:
+                                        st.write(f"**Cliente:** {dados_completos['nome_cliente']}")
+                                        st.write(f"**Processo Vinculado:** {dados_completos['processo']}")
+                                        st.write(f"**Órgão / Ente:** {dados_completos['orgao_ente'] if dados_completos['orgao_ente'] else 'Não informado'}")
+                                        st.write(f"**Responsável:** {dados_completos['responsavel']}")
+                                    with col_d2:
+                                        st.write(f"**Status:** {dados_completos['status']}")
+                                        st.write(f"**Urgência:** {dados_completos['urgente']}")
+                                        st.write(f"**Data de Início:** {dados_completos['data_inicio']}")
+                                        st.write(f"**Prazo Final:** {dados_completos['data_fim']}")
+                                    
+                                    st.write("**Descrição Detalhada / Diligência:**")
+                                    # Caixa de texto limpa para ler descrições longas
+                                    if pd.notna(dados_completos['tarefa']) and dados_completos['tarefa'].strip() != "":
+                                        st.info(dados_completos['tarefa'])
+                                    else:
+                                        st.write("*Nenhuma descrição detalhada informada.*")
                 
                 # ---- MODO DE EDIÇÃO ATIVO ----
                 else:
@@ -432,7 +472,6 @@ def tela_principal():
                 st.divider()
                 st.subheader("Entregar Tarefa / Diligência")
                 with st.form("form_entregar", clear_on_submit=True):
-                    # O usuário precisa saber o ID para entregar, então mostramos na lista suspensa
                     opcoes_entrega = [f"{row['id_prazo']} - {row['nome_tarefa']}" for index, row in meus_prazos.iterrows()]
                     tarefa_selecionada = st.selectbox("Selecione a tarefa que você finalizou:", opcoes_entrega)
                     submit_entregar = st.form_submit_button("Enviar para Revisão do Administrador")
