@@ -77,13 +77,13 @@ def exibir_detalhes_tarefa(dados_completos):
 config_visual_colunas = {
     "id_prazo": None, 
     "Selecionar": st.column_config.CheckboxColumn("✓", width="small"),
-    "nome_cliente": st.column_config.TextColumn("Cliente", width="medium"),
     "processo": st.column_config.TextColumn("Processo / Tarefa", width="large"),
-    "orgao_ente": st.column_config.TextColumn("Órgão", width="medium"),
-    "data_fim": st.column_config.TextColumn("Prazo Final", width="small"),
     "responsavel": st.column_config.TextColumn("Responsável", width="small"),
+    "data_fim": st.column_config.TextColumn("Prazo Final", width="small"),
     "urgente": st.column_config.TextColumn("Urgente", width="small"),
-    "status": st.column_config.TextColumn("Status", width="small")
+    "status": st.column_config.TextColumn("Status", width="small"),
+    "nome_cliente": st.column_config.TextColumn("Cliente", width="medium"),
+    "orgao_ente": st.column_config.TextColumn("Órgão", width="medium")
 }
 
 # --- CRIAÇÃO DO PRIMEIRO ADMIN ---
@@ -205,12 +205,13 @@ def tela_principal():
                             df_exibicao = formatar_tabela_exibicao(df_prazos_ordenado)
                             df_exibicao.insert(0, "Selecionar", False) 
                             
-                            colunas_mostrar = ['Selecionar', 'id_prazo', 'nome_cliente', 'processo', 'orgao_ente', 'data_fim', 'responsavel', 'urgente', 'status']
+                            # Nova ordem de colunas aplicada aqui!
+                            colunas_mostrar = ['Selecionar', 'id_prazo', 'processo', 'responsavel', 'data_fim', 'urgente', 'status', 'nome_cliente', 'orgao_ente']
                             
                             tabela_interativa = st.data_editor(
                                 df_exibicao[colunas_mostrar],
                                 hide_index=True,
-                                disabled=['id_prazo', 'nome_cliente', 'processo', 'orgao_ente', 'data_fim', 'responsavel', 'urgente', 'status'],
+                                disabled=['id_prazo', 'processo', 'responsavel', 'data_fim', 'urgente', 'status', 'nome_cliente', 'orgao_ente'],
                                 use_container_width=True,
                                 column_config=config_visual_colunas
                             )
@@ -257,20 +258,20 @@ def tela_principal():
                         id_alvo = st.session_state['id_editar']
                         df_editar = df_prazos[df_prazos['id_prazo'] == id_alvo].copy()
                         
-                        colunas_editaveis = ['nome_cliente', 'processo', 'nome_tarefa', 'orgao_ente', 'tarefa', 'data_fim', 'responsavel', 'urgente', 'status', 'vinculado']
+                        colunas_editaveis = ['processo', 'nome_tarefa', 'responsavel', 'data_fim', 'urgente', 'status', 'nome_cliente', 'orgao_ente', 'tarefa', 'vinculado']
                         
                         df_editado = st.data_editor(
                             df_editar[colunas_editaveis],
                             hide_index=True,
                             use_container_width=True,
                             column_config={
-                                "nome_cliente": st.column_config.TextColumn("Cliente"),
                                 "processo": st.column_config.TextColumn("Processo / Tarefa"),
-                                "orgao_ente": st.column_config.TextColumn("Órgão"),
-                                "data_fim": st.column_config.TextColumn("Prazo Final"),
                                 "responsavel": st.column_config.SelectboxColumn("Responsável", options=lista_usuarios),
-                                "status": st.column_config.SelectboxColumn("Status", options=["Ativo", "Concluído", "Pendente de Revisão", "Arquivado"]),
+                                "data_fim": st.column_config.TextColumn("Prazo Final"),
                                 "urgente": st.column_config.SelectboxColumn("Urgente", options=["Sim", "Não"]),
+                                "status": st.column_config.SelectboxColumn("Status", options=["Ativo", "Concluído", "Pendente de Revisão", "Arquivado"]),
+                                "nome_cliente": st.column_config.TextColumn("Cliente"),
+                                "orgao_ente": st.column_config.TextColumn("Órgão"),
                                 "vinculado": st.column_config.SelectboxColumn("Vinculado", options=["Sim", "Não"])
                             }
                         )
@@ -302,17 +303,15 @@ def tela_principal():
                     else:
                         st.write("Clique no evento dentro do calendário para ver todos os detalhes aqui embaixo.")
                         
-                        # Prepara os dados pro Calendário
                         eventos_calendario = []
                         for _, row in df_prazos_ordenado.iterrows():
-                            # Lógica de cores baseada na urgência e status
-                            cor_fundo = "#3b82f6" # Azul Padrão (Ativo)
+                            cor_fundo = "#3b82f6" 
                             if row['status'] == 'Concluído':
-                                cor_fundo = "#10b981" # Verde
+                                cor_fundo = "#10b981" 
                             elif row['status'] == 'Pendente de Revisão':
-                                cor_fundo = "#f59e0b" # Laranja
+                                cor_fundo = "#f59e0b" 
                             elif row['urgente'] == 'Sim':
-                                cor_fundo = "#ef4444" # Vermelho
+                                cor_fundo = "#ef4444" 
                                 
                             eventos_calendario.append({
                                 "title": f"{row['nome_cliente']} - {row['nome_tarefa']}",
@@ -332,19 +331,16 @@ def tela_principal():
                             },
                         }
                         
-                        # Renderiza o Calendário
                         cal_data = calendar(events=eventos_calendario, options=opcoes_calendario, custom_css="""
                             .fc-event-title { font-weight: bold; padding: 2px; }
                             .fc-event-time { display: none; }
                         """)
                         
-                        # Se o usuário clicar em um evento do calendário...
                         if isinstance(cal_data, dict) and cal_data.get("callback") == "eventClick":
                             event_id_clicado = cal_data["eventClick"]["event"]["id"]
                             st.divider()
                             st.subheader("📄 Detalhes da Tarefa Selecionada")
                             
-                            # Busca a tarefa no banco e exibe os detalhes
                             tarefa_selecionada = df_prazos[df_prazos['id_prazo'] == event_id_clicado]
                             if not tarefa_selecionada.empty:
                                 dados_completos_cal = tarefa_selecionada.iloc[0]
@@ -361,7 +357,8 @@ def tela_principal():
             
             if not df_revisao.empty:
                 df_exibicao = formatar_tabela_exibicao(df_revisao)
-                colunas_mostrar = ['id_prazo', 'nome_cliente', 'processo', 'orgao_ente', 'data_fim', 'responsavel', 'urgente']
+                # Aplicada a nova sequência
+                colunas_mostrar = ['id_prazo', 'processo', 'responsavel', 'data_fim', 'urgente', 'status', 'nome_cliente', 'orgao_ente']
                 st.dataframe(
                     df_exibicao[colunas_mostrar], 
                     use_container_width=True, hide_index=True,
@@ -628,7 +625,8 @@ def tela_principal():
             if not meus_prazos.empty:
                 meus_prazos = meus_prazos.sort_values(by='data_fim')
                 df_exibicao = formatar_tabela_exibicao(meus_prazos)
-                colunas_mostrar = ['id_prazo', 'nome_cliente', 'processo', 'orgao_ente', 'data_fim', 'urgente']
+                # Aplicada a nova sequência
+                colunas_mostrar = ['id_prazo', 'processo', 'responsavel', 'data_fim', 'urgente', 'status', 'nome_cliente', 'orgao_ente']
                 st.dataframe(
                     df_exibicao[colunas_mostrar], 
                     use_container_width=True, hide_index=True,
@@ -657,7 +655,8 @@ def tela_principal():
             
             if not minhas_revisoes.empty:
                 df_exibicao = formatar_tabela_exibicao(minhas_revisoes)
-                colunas_mostrar = ['id_prazo', 'nome_cliente', 'processo', 'data_fim', 'urgente']
+                # Aplicada a nova sequência
+                colunas_mostrar = ['id_prazo', 'processo', 'responsavel', 'data_fim', 'urgente', 'status', 'nome_cliente', 'orgao_ente']
                 st.dataframe(
                     df_exibicao[colunas_mostrar], 
                     use_container_width=True, hide_index=True,
