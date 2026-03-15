@@ -3,6 +3,13 @@ import pandas as pd
 from supabase import create_client, Client
 import time
 
+# --- TENTA IMPORTAR O CALENDÁRIO COM SEGURANÇA ---
+try:
+    from streamlit_calendar import calendar
+    HAS_CALENDAR = True
+except ImportError:
+    HAS_CALENDAR = False
+
 # --- CONFIGURAÇÃO DE SEGURANÇA (SUPABASE) ---
 @st.cache_resource
 def init_connection():
@@ -43,6 +50,28 @@ def formatar_tabela_exibicao(df):
             axis=1
         )
     return df_exibicao
+
+# Função auxiliar para padronizar a exibição dos detalhes de uma tarefa
+def exibir_detalhes_tarefa(dados_completos):
+    icone_urgente = "🚨 " if dados_completos['urgente'] == "Sim" else "📁 "
+    with st.expander(f"{icone_urgente} {dados_completos['nome_tarefa']} | Cliente: {dados_completos['nome_cliente']}", expanded=True):
+        col_d1, col_d2 = st.columns(2)
+        with col_d1:
+            st.write(f"**Cliente:** {dados_completos['nome_cliente']}")
+            st.write(f"**Processo Vinculado:** {dados_completos['processo']}")
+            st.write(f"**Órgão / Ente:** {dados_completos['orgao_ente'] if dados_completos['orgao_ente'] else 'Não informado'}")
+            st.write(f"**Responsável:** {dados_completos['responsavel']}")
+        with col_d2:
+            st.write(f"**Status:** {dados_completos['status']}")
+            st.write(f"**Urgência:** {dados_completos['urgente']}")
+            st.write(f"**Data de Início:** {dados_completos['data_inicio']}")
+            st.write(f"**Prazo Final:** {dados_completos['data_fim']}")
+        
+        st.write("**Descrição Detalhada / Diligência:**")
+        if pd.notna(dados_completos['tarefa']) and str(dados_completos['tarefa']).strip() != "":
+            st.info(dados_completos['tarefa'])
+        else:
+            st.write("*Nenhuma descrição detalhada informada.*")
 
 # --- DICIONÁRIO DE ESTÉTICA DAS TABELAS ---
 config_visual_colunas = {
@@ -120,6 +149,7 @@ def tela_principal():
             st.header("Painel Geral de Prazos")
             
             if not df_prazos.empty:
+                # --- ÁREA DE FILTROS GLOBAIS ---
                 with st.expander("🔍 Filtros de Busca", expanded=True):
                     col_f1, col_f2 = st.columns(2)
                     with col_f1:
@@ -137,6 +167,7 @@ def tela_principal():
                 
                 df_filtrado = df_prazos.copy()
                 
+                # Aplica os filtros
                 if filtro_cliente:
                     df_filtrado = df_filtrado[df_filtrado['nome_cliente'].astype(str).str.contains(filtro_cliente, case=False, na=False)]
                 if filtro_proc_tar:
@@ -158,123 +189,167 @@ def tela_principal():
                 if 'id_editar' not in st.session_state:
                     st.session_state['id_editar'] = None
 
-                # ---- MODO DE VISUALIZAÇÃO ----
-                if not st.session_state['modo_edicao']:
-                    st.write("Marque a caixa de seleção na primeira coluna para Excluir, Editar ou Ver Detalhes.")
+                # --- CRIAÇÃO DAS ABAS (LISTA E CALENDÁRIO) ---
+                tab_lista, tab_calendario = st.tabs(["📋 Visualização em Lista", "📅 Visualização em Calendário"])
+
+                # ==========================================
+                # ABA 1: LISTA INTERATIVA
+                # ==========================================
+                with tab_lista:
+                    if not st.session_state['modo_edicao']:
+                        st.write("Marque a caixa de seleção na primeira coluna para Excluir, Editar ou Ver Detalhes.")
+                        
+                        if df_prazos_ordenado.empty:
+                            st.warning("Nenhuma tarefa encontrada com os filtros selecionados.")
+                        else:
+                            df_exibicao = formatar_tabela_exibicao(df_prazos_ordenado)
+                            df_exibicao.insert(0, "Selecionar", False) 
+                            
+                            colunas_mostrar = ['Selecionar', 'id_prazo', 'nome_cliente', 'processo', 'orgao_ente', 'data_fim', 'responsavel', 'urgente', 'status']
+                            
+                            tabela_interativa = st.data_editor(
+                                df_exibicao[colunas_mostrar],
+                                hide_index=True,
+                                disabled=['id_prazo', 'nome_cliente', 'processo', 'orgao_ente', 'data_fim', 'responsavel', 'urgente', 'status'],
+                                use_container_width=True,
+                                column_config=config_visual_colunas
+                            )
+                            
+                            linhas_selecionadas = tabela_interativa[tabela_interativa['Selecionar'] == True]
+                            
+                            col1, col2 = st.columns(2)
+                            with col1:
+                                if st.button("🗑️ EXCLUIR"):
+                                    if not linhas_selecionadas.empty:
+                                        for index, row in linhas_selecionadas.iterrows():
+                                            supabase.table('prazos').delete().eq('id_prazo', row['id_prazo']).execute()
+                                        st.success("✅ Registros excluídos com sucesso!")
+                                        time.sleep(2)
+                                        st.rerun()
+                                    else:
+                                        st.warning("Selecione pelo menos uma linha marcando a caixa de seleção.")
+                                        
+                            with col2:
+                                if st.button("✏️ EDITAR"):
+                                    if len(linhas_selecionadas) == 1:
+                                        st.session_state['modo_edicao'] = True
+                                        st.session_state['id_editar'] = linhas_selecionadas.iloc[0]['id_prazo']
+                                        st.rerun()
+                                    elif len(linhas_selecionadas) > 1:
+                                        st.warning("Por favor, selecione apenas UMA linha para editar por vez.")
+                                    else:
+                                        st.warning("Selecione uma linha marcando a caixa de seleção para editar.")
+
+                            # --- DETALHES DA SELEÇÃO NA LISTA ---
+                            if not linhas_selecionadas.empty:
+                                st.divider()
+                                st.subheader("📄 Detalhes do Registro Selecionado")
+                                for index, row in linhas_selecionadas.iterrows():
+                                    id_sel = row['id_prazo']
+                                    dados_completos = df_prazos[df_prazos['id_prazo'] == id_sel].iloc[0]
+                                    exibir_detalhes_tarefa(dados_completos)
                     
-                    if df_prazos_ordenado.empty:
-                        st.warning("Nenhuma tarefa encontrada com os filtros selecionados.")
+                    # ---- MODO DE EDIÇÃO ATIVO NA LISTA ----
                     else:
-                        df_exibicao = formatar_tabela_exibicao(df_prazos_ordenado)
-                        df_exibicao.insert(0, "Selecionar", False) 
+                        st.subheader("✏️ Edição Rápida")
+                        st.write("Altere os valores diretamente nas células da tabela abaixo e clique em Salvar.")
                         
-                        colunas_mostrar = ['Selecionar', 'id_prazo', 'nome_cliente', 'processo', 'orgao_ente', 'data_fim', 'responsavel', 'urgente', 'status']
+                        id_alvo = st.session_state['id_editar']
+                        df_editar = df_prazos[df_prazos['id_prazo'] == id_alvo].copy()
                         
-                        tabela_interativa = st.data_editor(
-                            df_exibicao[colunas_mostrar],
+                        colunas_editaveis = ['nome_cliente', 'processo', 'nome_tarefa', 'orgao_ente', 'tarefa', 'data_fim', 'responsavel', 'urgente', 'status', 'vinculado']
+                        
+                        df_editado = st.data_editor(
+                            df_editar[colunas_editaveis],
                             hide_index=True,
-                            disabled=['id_prazo', 'nome_cliente', 'processo', 'orgao_ente', 'data_fim', 'responsavel', 'urgente', 'status'],
                             use_container_width=True,
-                            column_config=config_visual_colunas
+                            column_config={
+                                "nome_cliente": st.column_config.TextColumn("Cliente"),
+                                "processo": st.column_config.TextColumn("Processo / Tarefa"),
+                                "orgao_ente": st.column_config.TextColumn("Órgão"),
+                                "data_fim": st.column_config.TextColumn("Prazo Final"),
+                                "responsavel": st.column_config.SelectboxColumn("Responsável", options=lista_usuarios),
+                                "status": st.column_config.SelectboxColumn("Status", options=["Ativo", "Concluído", "Pendente de Revisão", "Arquivado"]),
+                                "urgente": st.column_config.SelectboxColumn("Urgente", options=["Sim", "Não"]),
+                                "vinculado": st.column_config.SelectboxColumn("Vinculado", options=["Sim", "Não"])
+                            }
                         )
                         
-                        linhas_selecionadas = tabela_interativa[tabela_interativa['Selecionar'] == True]
-                        
-                        col1, col2 = st.columns(2)
-                        with col1:
-                            if st.button("🗑️ EXCLUIR"):
-                                if not linhas_selecionadas.empty:
-                                    for index, row in linhas_selecionadas.iterrows():
-                                        supabase.table('prazos').delete().eq('id_prazo', row['id_prazo']).execute()
-                                    st.success("✅ Registros excluídos com sucesso!")
-                                    time.sleep(2)
-                                    st.rerun()
-                                else:
-                                    st.warning("Selecione pelo menos uma linha marcando a caixa de seleção.")
-                                    
-                        with col2:
-                            if st.button("✏️ EDITAR"):
-                                if len(linhas_selecionadas) == 1:
-                                    st.session_state['modo_edicao'] = True
-                                    st.session_state['id_editar'] = linhas_selecionadas.iloc[0]['id_prazo']
-                                    st.rerun()
-                                elif len(linhas_selecionadas) > 1:
-                                    st.warning("Por favor, selecione apenas UMA linha para editar por vez.")
-                                else:
-                                    st.warning("Selecione uma linha marcando a caixa de seleção para editar.")
-
-                        # --- DETALHES DA SELEÇÃO ---
-                        if not linhas_selecionadas.empty:
-                            st.divider()
-                            st.subheader("📄 Detalhes do Registro Selecionado")
-                            
-                            for index, row in linhas_selecionadas.iterrows():
-                                id_sel = row['id_prazo']
-                                dados_completos = df_prazos[df_prazos['id_prazo'] == id_sel].iloc[0]
-                                icone_urgente = "🚨 " if dados_completos['urgente'] == "Sim" else "📁 "
+                        col_salvar, col_cancelar = st.columns(2)
+                        with col_salvar:
+                            if st.button("💾 SALVAR"):
+                                linha_atualizada = df_editado.iloc[0]
+                                dados_atualizados = linha_atualizada.to_dict()
+                                supabase.table('prazos').update(dados_atualizados).eq('id_prazo', id_alvo).execute()
+                                st.success("✅ Cadastro alterado com sucesso!")
+                                st.session_state['modo_edicao'] = False
+                                st.session_state['id_editar'] = None
+                                time.sleep(2)
+                                st.rerun()
                                 
-                                with st.expander(f"{icone_urgente} {dados_completos['nome_tarefa']} | Cliente: {dados_completos['nome_cliente']}", expanded=True):
-                                    col_d1, col_d2 = st.columns(2)
-                                    with col_d1:
-                                        st.write(f"**Cliente:** {dados_completos['nome_cliente']}")
-                                        st.write(f"**Processo Vinculado:** {dados_completos['processo']}")
-                                        st.write(f"**Órgão / Ente:** {dados_completos['orgao_ente'] if dados_completos['orgao_ente'] else 'Não informado'}")
-                                        st.write(f"**Responsável:** {dados_completos['responsavel']}")
-                                    with col_d2:
-                                        st.write(f"**Status:** {dados_completos['status']}")
-                                        st.write(f"**Urgência:** {dados_completos['urgente']}")
-                                        st.write(f"**Data de Início:** {dados_completos['data_inicio']}")
-                                        st.write(f"**Prazo Final:** {dados_completos['data_fim']}")
-                                    
-                                    st.write("**Descrição Detalhada / Diligência:**")
-                                    if pd.notna(dados_completos['tarefa']) and dados_completos['tarefa'].strip() != "":
-                                        st.info(dados_completos['tarefa'])
-                                    else:
-                                        st.write("*Nenhuma descrição detalhada informada.*")
+                        with col_cancelar:
+                            if st.button("❌ CANCELAR"):
+                                st.session_state['modo_edicao'] = False
+                                st.session_state['id_editar'] = None
+                                st.rerun()
                 
-                # ---- MODO DE EDIÇÃO ATIVO ----
-                else:
-                    st.subheader("✏️ Edição Rápida")
-                    st.write("Altere os valores diretamente nas células da tabela abaixo e clique em Salvar.")
-                    
-                    id_alvo = st.session_state['id_editar']
-                    df_editar = df_prazos[df_prazos['id_prazo'] == id_alvo].copy()
-                    
-                    colunas_editaveis = ['nome_cliente', 'processo', 'nome_tarefa', 'orgao_ente', 'tarefa', 'data_fim', 'responsavel', 'urgente', 'status', 'vinculado']
-                    
-                    df_editado = st.data_editor(
-                        df_editar[colunas_editaveis],
-                        hide_index=True,
-                        use_container_width=True,
-                        column_config={
-                            "nome_cliente": st.column_config.TextColumn("Cliente"),
-                            "processo": st.column_config.TextColumn("Processo / Tarefa"),
-                            "orgao_ente": st.column_config.TextColumn("Órgão"),
-                            "data_fim": st.column_config.TextColumn("Prazo Final"),
-                            "responsavel": st.column_config.SelectboxColumn("Responsável", options=lista_usuarios),
-                            "status": st.column_config.SelectboxColumn("Status", options=["Ativo", "Concluído", "Pendente de Revisão", "Arquivado"]),
-                            "urgente": st.column_config.SelectboxColumn("Urgente", options=["Sim", "Não"]),
-                            "vinculado": st.column_config.SelectboxColumn("Vinculado", options=["Sim", "Não"])
-                        }
-                    )
-                    
-                    col_salvar, col_cancelar = st.columns(2)
-                    with col_salvar:
-                        if st.button("💾 SALVAR"):
-                            linha_atualizada = df_editado.iloc[0]
-                            dados_atualizados = linha_atualizada.to_dict()
-                            supabase.table('prazos').update(dados_atualizados).eq('id_prazo', id_alvo).execute()
-                            st.success("✅ Cadastro alterado com sucesso!")
-                            st.session_state['modo_edicao'] = False
-                            st.session_state['id_editar'] = None
-                            time.sleep(2)
-                            st.rerun()
+                # ==========================================
+                # ABA 2: CALENDÁRIO INTERATIVO
+                # ==========================================
+                with tab_calendario:
+                    if not HAS_CALENDAR:
+                        st.error("⚠️ O módulo do calendário ainda não está ativo. O Streamlit Cloud pode levar até 2 minutos para atualizar o novo requirements.txt. Atualize a página e tente novamente em breve.")
+                    else:
+                        st.write("Clique no evento dentro do calendário para ver todos os detalhes aqui embaixo.")
+                        
+                        # Prepara os dados pro Calendário
+                        eventos_calendario = []
+                        for _, row in df_prazos_ordenado.iterrows():
+                            # Lógica de cores baseada na urgência e status
+                            cor_fundo = "#3b82f6" # Azul Padrão (Ativo)
+                            if row['status'] == 'Concluído':
+                                cor_fundo = "#10b981" # Verde
+                            elif row['status'] == 'Pendente de Revisão':
+                                cor_fundo = "#f59e0b" # Laranja
+                            elif row['urgente'] == 'Sim':
+                                cor_fundo = "#ef4444" # Vermelho
+                                
+                            eventos_calendario.append({
+                                "title": f"{row['nome_cliente']} - {row['nome_tarefa']}",
+                                "start": row['data_fim'],
+                                "end": row['data_fim'],
+                                "id": row['id_prazo'],
+                                "backgroundColor": cor_fundo,
+                                "borderColor": cor_fundo
+                            })
                             
-                    with col_cancelar:
-                        if st.button("❌ CANCELAR"):
-                            st.session_state['modo_edicao'] = False
-                            st.session_state['id_editar'] = None
-                            st.rerun()
+                        opcoes_calendario = {
+                            "initialView": "dayGridMonth",
+                            "headerToolbar": {
+                                "left": "prev,next today",
+                                "center": "title",
+                                "right": "dayGridMonth,timeGridWeek,listMonth",
+                            },
+                        }
+                        
+                        # Renderiza o Calendário
+                        cal_data = calendar(events=eventos_calendario, options=opcoes_calendario, custom_css="""
+                            .fc-event-title { font-weight: bold; padding: 2px; }
+                            .fc-event-time { display: none; }
+                        """)
+                        
+                        # Se o usuário clicar em um evento do calendário...
+                        if isinstance(cal_data, dict) and cal_data.get("callback") == "eventClick":
+                            event_id_clicado = cal_data["eventClick"]["event"]["id"]
+                            st.divider()
+                            st.subheader("📄 Detalhes da Tarefa Selecionada")
+                            
+                            # Busca a tarefa no banco e exibe os detalhes
+                            tarefa_selecionada = df_prazos[df_prazos['id_prazo'] == event_id_clicado]
+                            if not tarefa_selecionada.empty:
+                                dados_completos_cal = tarefa_selecionada.iloc[0]
+                                exibir_detalhes_tarefa(dados_completos_cal)
+
             else:
                 st.info("Nenhum prazo cadastrado no sistema ainda.")
 
@@ -414,7 +489,7 @@ def tela_principal():
                                 else:
                                     st.write("📝 *Nenhuma tarefa vinculada a este processo.*")
 
-        # 6. GERENCIAR USUÁRIOS (NOVO E CORRIGIDO)
+        # 6. GERENCIAR USUÁRIOS
         elif menu_admin == "Gerenciar Usuários":
             st.header("👥 Gerenciar Usuários")
             
@@ -426,7 +501,6 @@ def tela_principal():
                     submit_user = st.form_submit_button("Criar Usuário")
                     
                     if submit_user:
-                        # Corta espaços em branco sem querer para evitar erros de login duplo
                         novo_login_limpo = novo_login.strip() 
                         if novo_login_limpo and nova_senha:
                             if not df_usuarios.empty and novo_login_limpo in df_usuarios['login'].values:
@@ -453,7 +527,6 @@ def tela_principal():
                     df_exibicao_user = df_usuarios.copy()
                     df_exibicao_user.insert(0, "Selecionar", False)
                     
-                    # Usando o ID interno e invisível do Supabase para não confundir nomes duplicados
                     colunas_user = ['Selecionar', 'id', 'login', 'senha', 'perfil']
                     
                     tabela_users = st.data_editor(
@@ -463,7 +536,7 @@ def tela_principal():
                         use_container_width=True,
                         column_config={
                             "Selecionar": st.column_config.CheckboxColumn("✓", width="small"),
-                            "id": None, # Esconde o ID visualmente
+                            "id": None,
                             "login": st.column_config.TextColumn("Login/Usuário"),
                             "senha": st.column_config.TextColumn("Senha Atual"), 
                             "perfil": st.column_config.TextColumn("Perfil de Acesso")
@@ -480,7 +553,6 @@ def tela_principal():
                                     if row['login'] == 'admin':
                                         st.error("⚠️ Não é possível excluir o usuário Administrador Principal ('admin').")
                                     else:
-                                        # Exclui pelo ID exato da linha, resolvendo o problema do duplicado!
                                         supabase.table('usuarios').delete().eq('id', row['id']).execute()
                                 st.success("✅ Ação concluída!")
                                 time.sleep(2)
@@ -495,7 +567,6 @@ def tela_principal():
                                     st.warning("⚠️ O login 'admin' é protegido e não pode ser editado. Crie outro administrador se necessário.")
                                 else:
                                     st.session_state['modo_edicao_user'] = True
-                                    # Grava o ID da linha para a edição exata
                                     st.session_state['id_editar_user'] = linhas_selecionadas_user.iloc[0]['id']
                                     st.rerun()
                             elif len(linhas_selecionadas_user) > 1:
@@ -524,13 +595,7 @@ def tela_principal():
                     with col_salvar_u:
                         if st.button("💾 SALVAR ALTERAÇÃO"):
                             linha_atualizada_u = df_editado_user.iloc[0]
-                            
-                            dados_atualizados_u = {
-                                'senha': linha_atualizada_u['senha'],
-                                'perfil': linha_atualizada_u['perfil']
-                            }
-                            
-                            # Atualiza baseado no ID invisível da linha correta
+                            dados_atualizados_u = {'senha': linha_atualizada_u['senha'], 'perfil': linha_atualizada_u['perfil']}
                             supabase.table('usuarios').update(dados_atualizados_u).eq('id', int(id_alvo_u)).execute()
                             
                             st.success("✅ Dados do usuário atualizados com sucesso!")
