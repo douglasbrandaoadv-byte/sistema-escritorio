@@ -1,5 +1,7 @@
 import streamlit as st
 import pandas as pd
+import numpy as np
+from datetime import datetime, timedelta, timezone
 from supabase import create_client, Client
 import time
 
@@ -51,6 +53,36 @@ def formatar_tabela_exibicao(df):
         )
     return df_exibicao
 
+# --- NOVO SISTEMA DE INTELIGÊNCIA VISUAL (CORES DE ALERTA) ---
+def colorir_prazos(row):
+    cor_padrao = [''] * len(row)
+    # Ignora as cores de alerta se a tarefa já estiver em um estágio finalizado/resolvido
+    status_inativos = ["Concluído", "Arquivado", "Protocolado/Entregue", "Protocolado Sem Revisão", "Aguardando Protocolo/Entrega"]
+    
+    if row.get('status') in status_inativos:
+        return cor_padrao
+        
+    try:
+        # Usa a data atual no fuso horário do Brasil (-3h)
+        hoje = datetime.now(timezone(timedelta(hours=-3))).date()
+        
+        # Converte a data da tabela
+        data_fim_str = str(row['data_fim']).split(" ")[0]
+        data_fim = datetime.strptime(data_fim_str, "%Y-%m-%d").date()
+        
+        # Calcula dias úteis de diferença
+        dias_uteis = np.busday_count(hoje.strftime('%Y-%m-%d'), data_fim.strftime('%Y-%m-%d'))
+        
+        if dias_uteis <= 1:
+            return ['background-color: rgba(255, 99, 71, 0.3)'] * len(row) # Vermelho (1 dia ou atrasado)
+        elif dias_uteis == 2:
+            return ['background-color: rgba(255, 235, 59, 0.4)'] * len(row) # Amarelo (2 dias úteis)
+        else:
+            return cor_padrao
+    except:
+        return cor_padrao
+
+# Função auxiliar para padronizar a exibição dos detalhes de uma tarefa
 def exibir_detalhes_tarefa(dados_completos):
     icone_urgente = "🚨 " if dados_completos['urgente'] == "Sim" else "📁 "
     with st.expander(f"{icone_urgente} {dados_completos['nome_tarefa']} | Cliente: {dados_completos['nome_cliente']}", expanded=True):
@@ -217,11 +249,13 @@ def tela_principal():
                         else:
                             df_exibicao = formatar_tabela_exibicao(df_prazos_ordenado)
                             df_exibicao.insert(0, "Selecionar", False) 
-                            
                             colunas_mostrar = ['Selecionar', 'id_prazo', 'processo', 'responsavel', 'data_fim', 'urgente', 'status', 'nome_cliente', 'orgao_ente']
                             
+                            # Aplica a inteligência visual de cores!
+                            df_estilizado = df_exibicao[colunas_mostrar].style.apply(colorir_prazos, axis=1)
+                            
                             tabela_interativa = st.data_editor(
-                                df_exibicao[colunas_mostrar],
+                                df_estilizado,
                                 hide_index=True,
                                 disabled=['id_prazo', 'processo', 'responsavel', 'data_fim', 'urgente', 'status', 'nome_cliente', 'orgao_ente'],
                                 use_container_width=True,
@@ -316,7 +350,7 @@ def tela_principal():
                                 continue
                                 
                             cor_fundo = "#3b82f6" 
-                            if row['status'] in ['Protocolado/Entregue']:
+                            if row['status'] in ['Protocolado/Entregue', 'Concluído']:
                                 cor_fundo = "#10b981" # Verde
                             elif row['status'] == 'Pendente de Revisão':
                                 cor_fundo = "#f59e0b" # Laranja
@@ -367,34 +401,53 @@ def tela_principal():
             else:
                 st.info("Nenhum prazo cadastrado no sistema ainda.")
 
-        # 2. PENDENTE DE REVISÃO (ADMIN)
+        # 2. PENDENTE DE REVISÃO (ADMIN - REFORMULADO COM CAIXAS)
         elif menu_admin == "Pendente de Revisão":
             st.header("Aprovação de Tarefas")
+            st.write("Marque as tarefas e escolha a ação desejada.")
             
             df_revisao = pd.DataFrame() if df_prazos.empty else df_prazos[df_prazos['status'] == 'Pendente de Revisão']
             
             if not df_revisao.empty:
                 df_exibicao = formatar_tabela_exibicao(df_revisao)
-                colunas_mostrar = ['id_prazo', 'processo', 'responsavel', 'data_fim', 'urgente', 'status', 'nome_cliente', 'orgao_ente']
-                st.dataframe(
-                    df_exibicao[colunas_mostrar], 
+                df_exibicao.insert(0, "Selecionar", False) 
+                colunas_mostrar = ['Selecionar', 'id_prazo', 'processo', 'responsavel', 'data_fim', 'urgente', 'status', 'nome_cliente', 'orgao_ente']
+                
+                df_estilizado = df_exibicao[colunas_mostrar].style.apply(colorir_prazos, axis=1)
+                
+                tabela_revisao = st.data_editor(
+                    df_estilizado, 
                     use_container_width=True, hide_index=True,
+                    disabled=['id_prazo', 'processo', 'responsavel', 'data_fim', 'urgente', 'status', 'nome_cliente', 'orgao_ente'],
                     column_config=config_visual_colunas
                 )
                 
+                linhas_selecionadas = tabela_revisao[tabela_revisao['Selecionar'] == True]
+                
                 st.divider()
-                st.subheader("Revisar Tarefa")
-                with st.form("form_revisao", clear_on_submit=True):
-                    id_alvo = st.selectbox("Selecione o ID da Tarefa para revisar:", df_revisao['id_prazo'].tolist())
-                    decisao = st.radio("Ação:", ["Aprovar (Aguardando Protocolo/Entrega)", "Devolver Para Alterações"])
-                    submit_revisao = st.form_submit_button("Confirmar Revisão")
-                    
-                    if submit_revisao:
-                        novo_status = "Aguardando Protocolo/Entrega" if "Aprovar" in decisao else "Devolvido Para Alteração"
-                        supabase.table('prazos').update({'status': novo_status}).eq('id_prazo', id_alvo).execute()
-                        st.success(f"✅ Tarefa atualizada para: {novo_status}!")
-                        time.sleep(2)
-                        st.rerun()
+                col_btn1, col_btn2 = st.columns(2)
+                
+                with col_btn1:
+                    if st.button("Aprovar (Aguardando Protocolo/Entrega)"):
+                        if not linhas_selecionadas.empty:
+                            for index, row in linhas_selecionadas.iterrows():
+                                supabase.table('prazos').update({'status': 'Aguardando Protocolo/Entrega'}).eq('id_prazo', row['id_prazo']).execute()
+                            st.success("✅ Tarefa(s) aprovada(s) com sucesso!")
+                            time.sleep(2)
+                            st.rerun()
+                        else:
+                            st.warning("Selecione pelo menos uma tarefa na tabela.")
+                            
+                with col_btn2:
+                    if st.button("Devolver Para Alterações"):
+                        if not linhas_selecionadas.empty:
+                            for index, row in linhas_selecionadas.iterrows():
+                                supabase.table('prazos').update({'status': 'Devolvido Para Alteração'}).eq('id_prazo', row['id_prazo']).execute()
+                            st.success("✅ Tarefa(s) devolvida(s) para o responsável realizar ajustes!")
+                            time.sleep(2)
+                            st.rerun()
+                        else:
+                            st.warning("Selecione pelo menos uma tarefa na tabela.")
             else:
                 st.success("Tudo limpo! Nenhuma tarefa aguardando revisão no momento.")
 
@@ -408,46 +461,63 @@ def tela_principal():
             if not df_devolvidos.empty:
                 df_exibicao = formatar_tabela_exibicao(df_devolvidos)
                 colunas_mostrar = ['id_prazo', 'processo', 'responsavel', 'data_fim', 'urgente', 'status', 'nome_cliente', 'orgao_ente']
+                df_estilizado = df_exibicao[colunas_mostrar].style.apply(colorir_prazos, axis=1)
+                
                 st.dataframe(
-                    df_exibicao[colunas_mostrar], 
+                    df_estilizado, 
                     use_container_width=True, hide_index=True,
                     column_config=config_visual_colunas
                 )
             else:
                 st.success("Tudo limpo! Nenhuma demanda devolvida para alteração.")
 
-        # 4. PROTOCOLADO SEM REVISÃO (ADMIN)
+        # 4. PROTOCOLADO SEM REVISÃO (ADMIN - REFORMULADO COM CAIXAS)
         elif menu_admin == "Protocolado Sem Revisão":
             st.header("Tarefas Protocoladas Sem Revisão")
-            st.write("Visão geral de todas as tarefas da equipe que foram enviadas sem passar por revisão.")
+            st.write("Selecione as tarefas enviadas pela equipe e escolha se deseja confirmar a entrega ou arquivar.")
             
             df_protocolado = pd.DataFrame() if df_prazos.empty else df_prazos[df_prazos['status'] == 'Protocolado Sem Revisão']
             
             if not df_protocolado.empty:
                 df_exibicao = formatar_tabela_exibicao(df_protocolado)
-                colunas_mostrar = ['id_prazo', 'processo', 'responsavel', 'data_fim', 'urgente', 'status', 'nome_cliente', 'orgao_ente']
-                st.dataframe(
-                    df_exibicao[colunas_mostrar], 
+                df_exibicao.insert(0, "Selecionar", False)
+                colunas_mostrar = ['Selecionar', 'id_prazo', 'processo', 'responsavel', 'data_fim', 'urgente', 'status', 'nome_cliente', 'orgao_ente']
+                
+                df_estilizado = df_exibicao[colunas_mostrar].style.apply(colorir_prazos, axis=1)
+                
+                tabela_protocolado = st.data_editor(
+                    df_estilizado, 
                     use_container_width=True, hide_index=True,
+                    disabled=['id_prazo', 'processo', 'responsavel', 'data_fim', 'urgente', 'status', 'nome_cliente', 'orgao_ente'],
                     column_config=config_visual_colunas
                 )
                 
+                linhas_selecionadas_prot = tabela_protocolado[tabela_protocolado['Selecionar'] == True]
+                
                 st.divider()
-                st.subheader("Dar Baixa ou Arquivar")
-                with st.form("form_protocolado", clear_on_submit=True):
-                    id_alvo = st.selectbox("Selecione o ID da Tarefa:", df_protocolado['id_prazo'].tolist())
-                    decisao = st.radio("Ação do Administrador:", ["Confirmar (Protocolado/Entregue)", "Arquivar", "Devolver para Ativo"])
-                    submit_prot = st.form_submit_button("Confirmar")
-                    
-                    if submit_prot:
-                        if "Confirmar" in decisao: novo_status = "Protocolado/Entregue"
-                        elif "Arquivar" in decisao: novo_status = "Arquivado"
-                        else: novo_status = "Ativo"
-                        
-                        supabase.table('prazos').update({'status': novo_status}).eq('id_prazo', id_alvo).execute()
-                        st.success(f"✅ Tarefa atualizada para: {novo_status}!")
-                        time.sleep(2)
-                        st.rerun()
+                col_btn1, col_btn2 = st.columns(2)
+                
+                with col_btn1:
+                    if st.button("Confirmar (Protocolado/Entregue)"):
+                        if not linhas_selecionadas_prot.empty:
+                            for index, row in linhas_selecionadas_prot.iterrows():
+                                supabase.table('prazos').update({'status': 'Protocolado/Entregue'}).eq('id_prazo', row['id_prazo']).execute()
+                            st.success("✅ Tarefa(s) confirmada(s) como Entregue/Protocolada!")
+                            time.sleep(2)
+                            st.rerun()
+                        else:
+                            st.warning("Selecione pelo menos uma tarefa na tabela.")
+                            
+                with col_btn2:
+                    if st.button("Arquivar"):
+                        if not linhas_selecionadas_prot.empty:
+                            for index, row in linhas_selecionadas_prot.iterrows():
+                                supabase.table('prazos').update({'status': 'Arquivado'}).eq('id_prazo', row['id_prazo']).execute()
+                            st.success("✅ Tarefa(s) enviada(s) para o Arquivo.")
+                            time.sleep(2)
+                            st.rerun()
+                        else:
+                            st.warning("Selecione pelo menos uma tarefa na tabela.")
             else:
                 st.success("Tudo limpo! Nenhuma tarefa protocolada sem revisão no momento.")
                 
@@ -461,8 +531,10 @@ def tela_principal():
             if not df_finalizados.empty:
                 df_exibicao = formatar_tabela_exibicao(df_finalizados)
                 colunas_mostrar = ['id_prazo', 'processo', 'responsavel', 'data_fim', 'urgente', 'status', 'nome_cliente', 'orgao_ente']
+                df_estilizado = df_exibicao[colunas_mostrar].style.apply(colorir_prazos, axis=1)
+                
                 st.dataframe(
-                    df_exibicao[colunas_mostrar], 
+                    df_estilizado, 
                     use_container_width=True, hide_index=True,
                     column_config=config_visual_colunas
                 )
@@ -697,15 +769,15 @@ def tela_principal():
     # VISÃO DO USUÁRIO COMUM
     # ==========================================
     else:
-        # SISTEMA DE NOTIFICAÇÕES INTELIGENTES NO TOPO DA TELA
+        # --- SISTEMA DE NOTIFICAÇÕES INTELIGENTES ---
         if not df_prazos.empty:
             tarefas_devolvidas_notif = df_prazos[(df_prazos['responsavel'] == st.session_state['usuario_logado']) & (df_prazos['status'] == 'Devolvido Para Alteração')]
             if not tarefas_devolvidas_notif.empty:
-                st.error("⚠️ **Atenção:** Abra o menu 'Devolvidos Para Alteração' vez que existem demandas com necessidade de alteração antes do protocolo ou entrega ao cliente.")
+                st.error("⚠️ **Atenção:** Abra o menu 'Devolvidos Para Alteração'. Existem demandas com necessidade de correção antes do protocolo ou entrega.")
 
             tarefas_aguardando_notif = df_prazos[(df_prazos['responsavel'] == st.session_state['usuario_logado']) & (df_prazos['status'] == 'Aguardando Protocolo/Entrega')]
             if not tarefas_aguardando_notif.empty:
-                st.info("🔔 **Aviso:** Existe processo pendente de ser protocolado ou entregue ao cliente. Verifique o menu 'Realizar Protocolo/Entrega'.")
+                st.info("🔔 **Aviso:** Existe processo aprovado pendente de ser protocolado ou entregue ao cliente. Verifique o menu 'Realizar Protocolo/Entrega'.")
 
         menu_user = st.sidebar.radio(
             "Navegação:", 
@@ -739,9 +811,10 @@ def tela_principal():
                 df_exibicao.insert(0, "Selecionar", False)
                 
                 colunas_mostrar = ['Selecionar', 'id_prazo', 'processo', 'responsavel', 'data_fim', 'urgente', 'status', 'nome_cliente', 'orgao_ente']
+                df_estilizado = df_exibicao[colunas_mostrar].style.apply(colorir_prazos, axis=1)
                 
                 tabela_interativa_user = st.data_editor(
-                    df_exibicao[colunas_mostrar], 
+                    df_estilizado, 
                     use_container_width=True, hide_index=True,
                     disabled=['id_prazo', 'processo', 'responsavel', 'data_fim', 'urgente', 'status', 'nome_cliente', 'orgao_ente'],
                     column_config=config_visual_colunas
@@ -784,8 +857,10 @@ def tela_principal():
             if not minhas_revisoes.empty:
                 df_exibicao = formatar_tabela_exibicao(minhas_revisoes)
                 colunas_mostrar = ['id_prazo', 'processo', 'responsavel', 'data_fim', 'urgente', 'status', 'nome_cliente', 'orgao_ente']
+                df_estilizado = df_exibicao[colunas_mostrar].style.apply(colorir_prazos, axis=1)
+                
                 st.dataframe(
-                    df_exibicao[colunas_mostrar], 
+                    df_estilizado, 
                     use_container_width=True, hide_index=True,
                     column_config=config_visual_colunas
                 )
@@ -804,9 +879,10 @@ def tela_principal():
                 df_exibicao.insert(0, "Selecionar", False)
                 
                 colunas_mostrar = ['Selecionar', 'id_prazo', 'processo', 'responsavel', 'data_fim', 'urgente', 'status', 'nome_cliente', 'orgao_ente']
+                df_estilizado = df_exibicao[colunas_mostrar].style.apply(colorir_prazos, axis=1)
                 
                 tabela_devolvidas = st.data_editor(
-                    df_exibicao[colunas_mostrar], 
+                    df_estilizado, 
                     use_container_width=True, hide_index=True,
                     disabled=['id_prazo', 'processo', 'responsavel', 'data_fim', 'urgente', 'status', 'nome_cliente', 'orgao_ente'],
                     column_config=config_visual_colunas
@@ -838,9 +914,10 @@ def tela_principal():
                 df_exibicao.insert(0, "Selecionar", False)
                 
                 colunas_mostrar = ['Selecionar', 'id_prazo', 'processo', 'responsavel', 'data_fim', 'urgente', 'status', 'nome_cliente', 'orgao_ente']
+                df_estilizado = df_exibicao[colunas_mostrar].style.apply(colorir_prazos, axis=1)
                 
                 tabela_protocolo = st.data_editor(
-                    df_exibicao[colunas_mostrar], 
+                    df_estilizado, 
                     use_container_width=True, hide_index=True,
                     disabled=['id_prazo', 'processo', 'responsavel', 'data_fim', 'urgente', 'status', 'nome_cliente', 'orgao_ente'],
                     column_config=config_visual_colunas
@@ -870,8 +947,10 @@ def tela_principal():
             if not minhas_prot.empty:
                 df_exibicao = formatar_tabela_exibicao(minhas_prot)
                 colunas_mostrar = ['id_prazo', 'processo', 'responsavel', 'data_fim', 'urgente', 'status', 'nome_cliente', 'orgao_ente']
+                df_estilizado = df_exibicao[colunas_mostrar].style.apply(colorir_prazos, axis=1)
+                
                 st.dataframe(
-                    df_exibicao[colunas_mostrar], 
+                    df_estilizado, 
                     use_container_width=True, hide_index=True,
                     column_config=config_visual_colunas
                 )
@@ -888,8 +967,10 @@ def tela_principal():
             if not minhas_finalizadas.empty:
                 df_exibicao = formatar_tabela_exibicao(minhas_finalizadas)
                 colunas_mostrar = ['id_prazo', 'processo', 'responsavel', 'data_fim', 'urgente', 'status', 'nome_cliente', 'orgao_ente']
+                df_estilizado = df_exibicao[colunas_mostrar].style.apply(colorir_prazos, axis=1)
+                
                 st.dataframe(
-                    df_exibicao[colunas_mostrar], 
+                    df_estilizado, 
                     use_container_width=True, hide_index=True,
                     column_config=config_visual_colunas
                 )
