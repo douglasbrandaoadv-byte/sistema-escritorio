@@ -1,3 +1,10 @@
+Essa é uma alteração de "nomenclatura visual" (UI) muito inteligente, pois deixa a barra de navegação mais curta, objetiva e com cara de sistema corporativo, usando termos que a equipe bate o olho e já sabe o que significa.
+
+**Um detalhe técnico importante que apliquei:** Eu alterei todos os **nomes dos menus, títulos, botões e caixas de notificação** para os novos nomes que você pediu. No entanto, mantive os nomes de *status* internos no banco de dados iguais (ex: o sistema ainda salva "Pendente de Revisão" nos bastidores). Isso garante que as tarefas que você já cadastrou não sumam da tela por causa da mudança de nome!
+
+Aqui está o **`app.py`** completo e integral com todas as atualizações. Pode substituir no seu GitHub:
+
+```python
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -56,33 +63,26 @@ def formatar_tabela_exibicao(df):
 # --- NOVO SISTEMA DE INTELIGÊNCIA VISUAL (CORES DE ALERTA) ---
 def colorir_prazos(row):
     cor_padrao = [''] * len(row)
-    # Ignora as cores de alerta se a tarefa já estiver em um estágio finalizado/resolvido
     status_inativos = ["Concluído", "Arquivado", "Protocolado/Entregue", "Protocolado Sem Revisão", "Aguardando Protocolo/Entrega"]
     
     if row.get('status') in status_inativos:
         return cor_padrao
         
     try:
-        # Usa a data atual no fuso horário do Brasil (-3h)
         hoje = datetime.now(timezone(timedelta(hours=-3))).date()
-        
-        # Converte a data da tabela
         data_fim_str = str(row['data_fim']).split(" ")[0]
         data_fim = datetime.strptime(data_fim_str, "%Y-%m-%d").date()
-        
-        # Calcula dias úteis de diferença
         dias_uteis = np.busday_count(hoje.strftime('%Y-%m-%d'), data_fim.strftime('%Y-%m-%d'))
         
         if dias_uteis <= 1:
-            return ['background-color: rgba(255, 99, 71, 0.3)'] * len(row) # Vermelho (1 dia ou atrasado)
+            return ['background-color: rgba(255, 99, 71, 0.3)'] * len(row) # Vermelho
         elif dias_uteis == 2:
-            return ['background-color: rgba(255, 235, 59, 0.4)'] * len(row) # Amarelo (2 dias úteis)
+            return ['background-color: rgba(255, 235, 59, 0.4)'] * len(row) # Amarelo
         else:
             return cor_padrao
     except:
         return cor_padrao
 
-# Função auxiliar para padronizar a exibição dos detalhes de uma tarefa
 def exibir_detalhes_tarefa(dados_completos):
     icone_urgente = "🚨 " if dados_completos['urgente'] == "Sim" else "📁 "
     with st.expander(f"{icone_urgente} {dados_completos['nome_tarefa']} | Cliente: {dados_completos['nome_cliente']}", expanded=True):
@@ -176,9 +176,9 @@ def tela_principal():
             "Navegação:", 
             [
                 "Painel de Prazos", 
-                "Pendente de Revisão", 
-                "Devolvidos Para Alteração", 
-                "Protocolado Sem Revisão", 
+                "P/ REVISÃO", 
+                "PENDENTE DE CORREÇÃO", 
+                "P/PROTOCOLO ou ENVIO", 
                 "Demandas Protocoladas/Entregues", 
                 "Cadastrar Prazo/Diligência", 
                 "Cadastrar Processo", 
@@ -251,7 +251,6 @@ def tela_principal():
                             df_exibicao.insert(0, "Selecionar", False) 
                             colunas_mostrar = ['Selecionar', 'id_prazo', 'processo', 'responsavel', 'data_fim', 'urgente', 'status', 'nome_cliente', 'orgao_ente']
                             
-                            # Aplica a inteligência visual de cores!
                             df_estilizado = df_exibicao[colunas_mostrar].style.apply(colorir_prazos, axis=1)
                             
                             tabela_interativa = st.data_editor(
@@ -351,17 +350,17 @@ def tela_principal():
                                 
                             cor_fundo = "#3b82f6" 
                             if row['status'] in ['Protocolado/Entregue', 'Concluído']:
-                                cor_fundo = "#10b981" # Verde
+                                cor_fundo = "#10b981" 
                             elif row['status'] == 'Pendente de Revisão':
-                                cor_fundo = "#f59e0b" # Laranja
+                                cor_fundo = "#f59e0b" 
                             elif row['status'] == 'Devolvido Para Alteração':
-                                cor_fundo = "#ec4899" # Rosa
+                                cor_fundo = "#ec4899" 
                             elif row['status'] == 'Protocolado Sem Revisão':
-                                cor_fundo = "#8b5cf6" # Roxo
+                                cor_fundo = "#8b5cf6" 
                             elif row['status'] == 'Aguardando Protocolo/Entrega':
-                                cor_fundo = "#0ea5e9" # Azul claro
+                                cor_fundo = "#0ea5e9" 
                             elif row['urgente'] == 'Sim':
-                                cor_fundo = "#ef4444" # Vermelho
+                                cor_fundo = "#ef4444" 
                             
                             data_limpa = str(row['data_fim']).strip().split(" ")[0]
                                 
@@ -401,9 +400,9 @@ def tela_principal():
             else:
                 st.info("Nenhum prazo cadastrado no sistema ainda.")
 
-        # 2. PENDENTE DE REVISÃO (ADMIN - REFORMULADO COM CAIXAS)
-        elif menu_admin == "Pendente de Revisão":
-            st.header("Aprovação de Tarefas")
+        # 2. P/ REVISÃO (ADMIN)
+        elif menu_admin == "P/ REVISÃO":
+            st.header("Aprovação de Tarefas (P/ REVISÃO)")
             st.write("Marque as tarefas e escolha a ação desejada.")
             
             df_revisao = pd.DataFrame() if df_prazos.empty else df_prazos[df_prazos['status'] == 'Pendente de Revisão']
@@ -451,9 +450,9 @@ def tela_principal():
             else:
                 st.success("Tudo limpo! Nenhuma tarefa aguardando revisão no momento.")
 
-        # 3. DEVOLVIDOS PARA ALTERAÇÃO (ADMIN)
-        elif menu_admin == "Devolvidos Para Alteração":
-            st.header("Demandas Devolvidas para Correção")
+        # 3. PENDENTE DE CORREÇÃO (ADMIN)
+        elif menu_admin == "PENDENTE DE CORREÇÃO":
+            st.header("Demandas Devolvidas (PENDENTE DE CORREÇÃO)")
             st.write("Visualização de todas as tarefas da equipe que foram devolvidas e aguardam ajustes.")
             
             df_devolvidos = pd.DataFrame() if df_prazos.empty else df_prazos[df_prazos['status'] == 'Devolvido Para Alteração']
@@ -471,9 +470,9 @@ def tela_principal():
             else:
                 st.success("Tudo limpo! Nenhuma demanda devolvida para alteração.")
 
-        # 4. PROTOCOLADO SEM REVISÃO (ADMIN - REFORMULADO COM CAIXAS)
-        elif menu_admin == "Protocolado Sem Revisão":
-            st.header("Tarefas Protocoladas Sem Revisão")
+        # 4. P/PROTOCOLO ou ENVIO (ADMIN)
+        elif menu_admin == "P/PROTOCOLO ou ENVIO":
+            st.header("Tarefas Protocoladas Sem Revisão (P/PROTOCOLO ou ENVIO)")
             st.write("Selecione as tarefas enviadas pela equipe e escolha se deseja confirmar a entrega ou arquivar.")
             
             df_protocolado = pd.DataFrame() if df_prazos.empty else df_prazos[df_prazos['status'] == 'Protocolado Sem Revisão']
@@ -769,11 +768,10 @@ def tela_principal():
     # VISÃO DO USUÁRIO COMUM
     # ==========================================
     else:
-        # --- SISTEMA DE NOTIFICAÇÕES INTELIGENTES ---
         if not df_prazos.empty:
             tarefas_devolvidas_notif = df_prazos[(df_prazos['responsavel'] == st.session_state['usuario_logado']) & (df_prazos['status'] == 'Devolvido Para Alteração')]
             if not tarefas_devolvidas_notif.empty:
-                st.error("⚠️ **Atenção:** Abra o menu 'Devolvidos Para Alteração'. Existem demandas com necessidade de correção antes do protocolo ou entrega.")
+                st.error("⚠️ **Atenção:** Abra o menu 'PENDENTE DE CORREÇÃO'. Existem demandas com necessidade de correção antes do protocolo ou entrega.")
 
             tarefas_aguardando_notif = df_prazos[(df_prazos['responsavel'] == st.session_state['usuario_logado']) & (df_prazos['status'] == 'Aguardando Protocolo/Entrega')]
             if not tarefas_aguardando_notif.empty:
@@ -783,10 +781,10 @@ def tela_principal():
             "Navegação:", 
             [
                 "Meus Prazos Ativos", 
-                "Pendente de Revisão", 
-                "Devolvidos Para Alteração", 
+                "P/ REVISÃO", 
+                "PENDENTE DE CORREÇÃO", 
                 "Realizar Protocolo/Entrega", 
-                "Protocolado Sem Revisão", 
+                "P/PROTOCOLO ou ENVIO", 
                 "Demandas Protocoladas/Entregues"
             ]
         )
@@ -837,7 +835,7 @@ def tela_principal():
                             st.warning("Selecione pelo menos uma tarefa marcando a caixa de seleção na tabela acima.")
                             
                 with col_btn2:
-                    if st.button("Protocolado Sem Revisão"):
+                    if st.button("P/PROTOCOLO ou ENVIO"):
                         if not linhas_selecionadas_user.empty:
                             for index, row in linhas_selecionadas_user.iterrows():
                                 supabase.table('prazos').update({'status': 'Protocolado Sem Revisão'}).eq('id_prazo', row['id_prazo']).execute()
@@ -849,9 +847,9 @@ def tela_principal():
             else:
                 st.success("Você não tem prazos ativos no momento. Bom trabalho!")
 
-        # TELA 2: PENDENTE DE REVISÃO (LEITURA)
-        elif menu_user == "Pendente de Revisão":
-            st.header("Minhas Tarefas em Revisão")
+        # TELA 2: P/ REVISÃO (LEITURA)
+        elif menu_user == "P/ REVISÃO":
+            st.header("Minhas Tarefas (P/ REVISÃO)")
             minhas_revisoes = pd.DataFrame() if df_prazos.empty else df_prazos[(df_prazos['responsavel'] == st.session_state['usuario_logado']) & (df_prazos['status'] == 'Pendente de Revisão')]
             
             if not minhas_revisoes.empty:
@@ -867,9 +865,9 @@ def tela_principal():
             else:
                 st.info("Você não tem nenhuma tarefa aguardando revisão.")
 
-        # TELA 3: DEVOLVIDOS PARA ALTERAÇÃO (AÇÃO)
-        elif menu_user == "Devolvidos Para Alteração":
-            st.header("Demandas Devolvidas para Correção")
+        # TELA 3: PENDENTE DE CORREÇÃO (AÇÃO)
+        elif menu_user == "PENDENTE DE CORREÇÃO":
+            st.header("Demandas Devolvidas (PENDENTE DE CORREÇÃO)")
             
             tarefas_devolvidas = pd.DataFrame() if df_prazos.empty else df_prazos[(df_prazos['responsavel'] == st.session_state['usuario_logado']) & (df_prazos['status'] == 'Devolvido Para Alteração')]
             
@@ -937,9 +935,9 @@ def tela_principal():
             else:
                 st.success("Nenhuma tarefa aguardando protocolo ou entrega neste momento.")
                 
-        # TELA 5: PROTOCOLADO SEM REVISÃO (LEITURA)
-        elif menu_user == "Protocolado Sem Revisão":
-            st.header("Protocoladas Sem Revisão")
+        # TELA 5: P/PROTOCOLO ou ENVIO (LEITURA)
+        elif menu_user == "P/PROTOCOLO ou ENVIO":
+            st.header("Tarefas Protocoladas Sem Revisão (P/PROTOCOLO ou ENVIO)")
             st.write("Histórico das suas tarefas que foram entregues sem passar pela revisão do administrador.")
             
             minhas_prot = pd.DataFrame() if df_prazos.empty else df_prazos[(df_prazos['responsavel'] == st.session_state['usuario_logado']) & (df_prazos['status'] == 'Protocolado Sem Revisão')]
@@ -982,3 +980,4 @@ if st.session_state['usuario_logado'] is None:
     tela_login()
 else:
     tela_principal()
+```
