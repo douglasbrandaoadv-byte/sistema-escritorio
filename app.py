@@ -1,10 +1,3 @@
-Essa é uma alteração de "nomenclatura visual" (UI) muito inteligente, pois deixa a barra de navegação mais curta, objetiva e com cara de sistema corporativo, usando termos que a equipe bate o olho e já sabe o que significa.
-
-**Um detalhe técnico importante que apliquei:** Eu alterei todos os **nomes dos menus, títulos, botões e caixas de notificação** para os novos nomes que você pediu. No entanto, mantive os nomes de *status* internos no banco de dados iguais (ex: o sistema ainda salva "Pendente de Revisão" nos bastidores). Isso garante que as tarefas que você já cadastrou não sumam da tela por causa da mudança de nome!
-
-Aqui está o **`app.py`** completo e integral com todas as atualizações. Pode substituir no seu GitHub:
-
-```python
 import streamlit as st
 import pandas as pd
 import numpy as np
