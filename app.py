@@ -973,4 +973,3 @@ if st.session_state['usuario_logado'] is None:
     tela_login()
 else:
     tela_principal()
-```
