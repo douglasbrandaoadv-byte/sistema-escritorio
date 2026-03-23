@@ -44,19 +44,29 @@ def carregar_prazos():
         return pd.DataFrame(columns=['id_prazo', 'processo', 'nome_cliente', 'nome_tarefa', 'orgao_ente', 'tarefa', 'data_inicio', 'data_fim', 'responsavel', 'urgente', 'status', 'vinculado'])
     return pd.DataFrame(res.data)
 
-# NOVO: Função para registrar a linha do tempo da tarefa
 def registrar_movimentacao(id_prazo, acao, usuario):
+    try:
+        data_hora = datetime.now(timezone(timedelta(hours=-3))).strftime("%d/%m/%Y %H:%M:%S")
+        dados = {'id_prazo': id_prazo, 'acao': acao, 'usuario': usuario, 'data_hora': data_hora}
+        supabase.table('historico_tarefas').insert(dados).execute()
+    except Exception as e:
+        pass
+
+# NOVO: Função de Disparo de Notificações
+def criar_notificacao(id_prazo, usuario_destino, mensagem, menu_atual):
     try:
         data_hora = datetime.now(timezone(timedelta(hours=-3))).strftime("%d/%m/%Y %H:%M:%S")
         dados = {
             'id_prazo': id_prazo,
-            'acao': acao,
-            'usuario': usuario,
+            'usuario_destino': usuario_destino,
+            'mensagem': mensagem,
+            'menu_atual': menu_atual,
+            'lida': 'Não',
             'data_hora': data_hora
         }
-        supabase.table('historico_tarefas').insert(dados).execute()
+        supabase.table('notificacoes').insert(dados).execute()
     except Exception as e:
-        pass # Falha silenciosamente se a tabela não existir, para não travar o app
+        pass
 
 def formatar_tabela_exibicao(df):
     df_exibicao = df.copy()
@@ -111,7 +121,6 @@ def exibir_detalhes_tarefa(dados_completos):
         else:
             st.write("*Nenhuma descrição detalhada informada.*")
 
-# --- LISTA PADRONIZADA DE STATUS ---
 STATUS_OPTIONS = [
     "Ativo", 
     "Pendente de Revisão", 
@@ -134,12 +143,10 @@ config_visual_colunas = {
     "orgao_ente": st.column_config.TextColumn("Órgão", width="medium")
 }
 
-# --- CRIAÇÃO DO PRIMEIRO ADMIN ---
 df_check_admin = carregar_usuarios()
 if df_check_admin.empty:
     supabase.table('usuarios').insert({'login': 'admin', 'senha': 'admin', 'perfil': 'Administrador'}).execute()
 
-# --- CONTROLE DE SESSÃO (LOGIN) ---
 if 'usuario_logado' not in st.session_state:
     st.session_state['usuario_logado'] = None
 if 'perfil_usuario' not in st.session_state:
@@ -179,18 +186,17 @@ def tela_principal():
     # VISÃO DO ADMINISTRADOR
     # ==========================================
     if st.session_state['perfil_usuario'] == 'Administrador':
-        # ORDEM ATUALIZADA (CADASTRAR TAREFAS PRIMEIRO)
         menu_admin = st.sidebar.radio(
             "Navegação:", 
             [
                 "CADASTRAR TAREFAS",
-                "Painel de Prazos", 
+                "PAINEL DE PRAZOS", 
                 "P/ REVISÃO", 
                 "PENDENTE DE CORREÇÃO", 
                 "P/PROTOCOLO ou ENVIO", 
                 "CONCLUÍDOS", 
-                "Cadastrar Processo", 
                 "HISTÓRICO DAS TAREFAS", 
+                "Cadastrar Processo", 
                 "Gerenciar Usuários"
             ]
         )
@@ -203,7 +209,7 @@ def tela_principal():
                 if key in st.session_state: del st.session_state[key]
             st.rerun()
 
-        # 1. CADASTRAR TAREFAS (MOVIDO PARA CIMA)
+        # 1. CADASTRAR TAREFAS
         if menu_admin == "CADASTRAR TAREFAS":
             st.header("Cadastrar Nova Tarefa / Diligência")
             
@@ -241,12 +247,14 @@ def tela_principal():
                         }
                         supabase.table('prazos').insert(dados_prazo).execute()
                         registrar_movimentacao(novo_id, "Tarefa Cadastrada no Sistema", st.session_state['usuario_logado'])
+                        criar_notificacao(novo_id, responsavel, f"Nova Tarefa Atribuída: {nome_tarefa}", "Meus Prazos Ativos")
+                        
                         st.success("✅ Tarefa cadastrada e atribuída com sucesso!")
                         time.sleep(2)
                         st.rerun()
 
         # 2. PAINEL DE PRAZOS
-        elif menu_admin == "Painel de Prazos":
+        elif menu_admin == "PAINEL DE PRAZOS":
             st.header("Painel Geral de Prazos")
             
             if not df_prazos.empty:
@@ -452,7 +460,7 @@ def tela_principal():
             else:
                 st.info("Nenhum prazo cadastrado no sistema ainda.")
 
-        # 3. P/ REVISÃO (ADMIN)
+        # 3. P/ REVISÃO
         elif menu_admin == "P/ REVISÃO":
             st.header("Aprovação de Tarefas (P/ REVISÃO)")
             st.write("Marque as tarefas e escolha a ação desejada.")
@@ -484,6 +492,7 @@ def tela_principal():
                             for index, row in linhas_selecionadas.iterrows():
                                 supabase.table('prazos').update({'status': 'Aguardando Protocolo/Entrega'}).eq('id_prazo', row['id_prazo']).execute()
                                 registrar_movimentacao(row['id_prazo'], "Aprovado - Aguardando Protocolo Final", st.session_state['usuario_logado'])
+                                criar_notificacao(row['id_prazo'], row['responsavel'], "Tarefa APROVADA! Avance para o protocolo final.", "Realizar Protocolo/Entrega")
                             st.success("✅ Tarefa(s) aprovada(s) com sucesso!")
                             time.sleep(2)
                             st.rerun()
@@ -496,6 +505,7 @@ def tela_principal():
                             for index, row in linhas_selecionadas.iterrows():
                                 supabase.table('prazos').update({'status': 'Devolvido Para Alteração'}).eq('id_prazo', row['id_prazo']).execute()
                                 registrar_movimentacao(row['id_prazo'], "Devolvido para Correção", st.session_state['usuario_logado'])
+                                criar_notificacao(row['id_prazo'], row['responsavel'], "Tarefa DEVOLVIDA! Verifique as correções necessárias.", "PENDENTE DE CORREÇÃO")
                             st.success("✅ Tarefa(s) devolvida(s) para o responsável realizar ajustes!")
                             time.sleep(2)
                             st.rerun()
@@ -504,7 +514,7 @@ def tela_principal():
             else:
                 st.success("Tudo limpo! Nenhuma tarefa aguardando revisão no momento.")
 
-        # 4. PENDENTE DE CORREÇÃO (ADMIN)
+        # 4. PENDENTE DE CORREÇÃO
         elif menu_admin == "PENDENTE DE CORREÇÃO":
             st.header("Demandas Devolvidas (PENDENTE DE CORREÇÃO)")
             st.write("Visualização de todas as tarefas da equipe que foram devolvidas e aguardam ajustes.")
@@ -524,7 +534,7 @@ def tela_principal():
             else:
                 st.success("Tudo limpo! Nenhuma demanda devolvida para alteração.")
 
-        # 5. P/PROTOCOLO ou ENVIO (ADMIN)
+        # 5. P/PROTOCOLO ou ENVIO
         elif menu_admin == "P/PROTOCOLO ou ENVIO":
             st.header("Tarefas Protocoladas Sem Revisão (P/PROTOCOLO ou ENVIO)")
             st.write("Selecione as tarefas enviadas pela equipe e escolha se deseja confirmar a entrega ou arquivar.")
@@ -576,7 +586,7 @@ def tela_principal():
             else:
                 st.success("Tudo limpo! Nenhuma tarefa protocolada sem revisão no momento.")
                 
-        # 6. CONCLUÍDOS (ADMIN)
+        # 6. CONCLUÍDOS
         elif menu_admin == "CONCLUÍDOS":
             st.header("Processos e Tarefas Concluídas")
             st.write("Histórico consolidado de todas as demandas finalizadas e entregues ao cliente ou protocoladas.")
@@ -596,28 +606,7 @@ def tela_principal():
             else:
                 st.info("Nenhuma demanda finalizada nesta categoria ainda.")
 
-        # 7. CADASTRAR PROCESSO
-        elif menu_admin == "Cadastrar Processo":
-            st.header("Cadastrar Novo Processo")
-            with st.form("form_novo_processo", clear_on_submit=True):
-                tipo_proc = st.selectbox("Tipo:", ["Judicial", "Extrajudicial"])
-                num_proc = st.text_input("Número do Processo (Apenas números):")
-                cliente = st.text_input("Nome do Cliente:")
-                submit_proc = st.form_submit_button("Salvar Processo")
-                
-                if submit_proc:
-                    if num_proc and cliente:
-                        num_proc_limpo = num_proc.replace(".", "").replace("-", "")
-                        novo_id = f"PR-{len(df_processos) + 1}"
-                        dados_proc = {'id_processo': novo_id, 'tipo': tipo_proc, 'numero': num_proc_limpo, 'cliente': cliente}
-                        supabase.table('processos').insert(dados_proc).execute()
-                        st.success("✅ Processo cadastrado com sucesso!")
-                        time.sleep(2)
-                        st.rerun()
-                    else:
-                        st.error("Preencha o Número e o Cliente.")
-
-        # 8. HISTÓRICO DAS TAREFAS (NOVA TELA DE AUDITORIA)
+        # 7. HISTÓRICO DAS TAREFAS (AUDITORIA)
         elif menu_admin == "HISTÓRICO DAS TAREFAS":
             st.header("⏳ Histórico e Rastreio de Tarefas")
             st.write("Acompanhe toda a linha do tempo e as movimentações de cada tarefa no sistema.")
@@ -657,7 +646,6 @@ def tela_principal():
                             id_alvo = row['id_prazo']
                             st.markdown(f"**Rastreio do ID:** `{id_alvo}` | **Tarefa:** {row['processo']}")
                             
-                            # Busca o histórico lá do Supabase
                             res_hist = supabase.table('historico_tarefas').select('*').eq('id_prazo', id_alvo).order('id', desc=False).execute()
                             if res_hist.data:
                                 df_h = pd.DataFrame(res_hist.data)
@@ -676,6 +664,27 @@ def tela_principal():
                     st.info("Nenhuma tarefa encontrada com esses filtros.")
             else:
                 st.info("Nenhuma tarefa cadastrada no sistema.")
+
+        # 8. CADASTRAR PROCESSO
+        elif menu_admin == "Cadastrar Processo":
+            st.header("Cadastrar Novo Processo")
+            with st.form("form_novo_processo", clear_on_submit=True):
+                tipo_proc = st.selectbox("Tipo:", ["Judicial", "Extrajudicial"])
+                num_proc = st.text_input("Número do Processo (Apenas números):")
+                cliente = st.text_input("Nome do Cliente:")
+                submit_proc = st.form_submit_button("Salvar Processo")
+                
+                if submit_proc:
+                    if num_proc and cliente:
+                        num_proc_limpo = num_proc.replace(".", "").replace("-", "")
+                        novo_id = f"PR-{len(df_processos) + 1}"
+                        dados_proc = {'id_processo': novo_id, 'tipo': tipo_proc, 'numero': num_proc_limpo, 'cliente': cliente}
+                        supabase.table('processos').insert(dados_proc).execute()
+                        st.success("✅ Processo cadastrado com sucesso!")
+                        time.sleep(2)
+                        st.rerun()
+                    else:
+                        st.error("Preencha o Número e o Cliente.")
 
         # 9. GERENCIAR USUÁRIOS
         elif menu_admin == "Gerenciar Usuários":
@@ -751,7 +760,7 @@ def tela_principal():
                         if st.button("✏️ EDITAR USUÁRIO"):
                             if len(linhas_selecionadas_user) == 1:
                                 if linhas_selecionadas_user.iloc[0]['login'] == 'admin':
-                                    st.warning("⚠️ O login 'admin' é protegido e não pode ser editado. Crie outro administrador se necessário.")
+                                    st.warning("⚠️ O login 'admin' é protegido e não pode ser editado.")
                                 else:
                                     st.session_state['modo_edicao_user'] = True
                                     st.session_state['id_editar_user'] = linhas_selecionadas_user.iloc[0]['id']
@@ -800,19 +809,18 @@ def tela_principal():
     # VISÃO DO USUÁRIO COMUM
     # ==========================================
     else:
-        # --- SISTEMA DE NOTIFICAÇÕES INTELIGENTES ---
-        if not df_prazos.empty:
-            tarefas_devolvidas_notif = df_prazos[(df_prazos['responsavel'] == st.session_state['usuario_logado']) & (df_prazos['status'] == 'Devolvido Para Alteração')]
-            if not tarefas_devolvidas_notif.empty:
-                st.error("⚠️ **Atenção:** Abra o menu 'PENDENTE DE CORREÇÃO'. Existem demandas com necessidade de correção antes do protocolo ou entrega.")
-
-            tarefas_aguardando_notif = df_prazos[(df_prazos['responsavel'] == st.session_state['usuario_logado']) & (df_prazos['status'] == 'Aguardando Protocolo/Entrega')]
-            if not tarefas_aguardando_notif.empty:
-                st.info("🔔 **Aviso:** Existe processo aprovado pendente de ser protocolado ou entregue ao cliente. Verifique o menu 'Realizar Protocolo/Entrega'.")
+        # AVISO DE NOTIFICAÇÕES NÃO LIDAS NO TOPO
+        try:
+            res_nao_lidas = supabase.table('notificacoes').select('*').eq('usuario_destino', st.session_state['usuario_logado']).eq('lida', 'Não').execute()
+            if res_nao_lidas.data:
+                st.warning(f"🔔 **Atenção:** Você tem {len(res_nao_lidas.data)} nova(s) notificação(ões)! Verifique a aba 'NOTIFICAÇÕES'.")
+        except:
+            pass
 
         menu_user = st.sidebar.radio(
             "Navegação:", 
             [
+                "NOTIFICAÇÕES",
                 "Meus Prazos Ativos", 
                 "P/ REVISÃO", 
                 "PENDENTE DE CORREÇÃO", 
@@ -828,8 +836,59 @@ def tela_principal():
             st.session_state['perfil_usuario'] = None
             st.rerun()
 
+        # TELA 0: NOTIFICAÇÕES (NOVA TELA)
+        if menu_user == "NOTIFICAÇÕES":
+            st.header("🔔 Central de Notificações")
+            st.write("Veja as tarefas que foram encaminhadas ou devolvidas para você. Selecione as lidas e clique no botão para retirar o destaque.")
+            
+            try:
+                res_notif = supabase.table('notificacoes').select('*').eq('usuario_destino', st.session_state['usuario_logado']).order('id', desc=True).execute()
+                df_notif = pd.DataFrame(res_notif.data)
+            except:
+                df_notif = pd.DataFrame()
+
+            if not df_notif.empty:
+                def colorir_notificacoes(row):
+                    if row['lida'] == 'Não':
+                        return ['background-color: rgba(59, 130, 246, 0.2); font-weight: bold'] * len(row) # Fundo azul p/ novos
+                    return [''] * len(row)
+
+                df_notif.insert(0, "Selecionar", False)
+                col_mostrar = ['Selecionar', 'id', 'data_hora', 'id_prazo', 'mensagem', 'menu_atual', 'lida']
+                df_estilizado_notif = df_notif[col_mostrar].style.apply(colorir_notificacoes, axis=1)
+                
+                tabela_notif = st.data_editor(
+                    df_estilizado_notif,
+                    hide_index=True,
+                    disabled=['id', 'data_hora', 'id_prazo', 'mensagem', 'menu_atual', 'lida'],
+                    use_container_width=True,
+                    column_config={
+                        "Selecionar": st.column_config.CheckboxColumn("✓", width="small"),
+                        "id": None, # Esconde ID visualmente
+                        "data_hora": st.column_config.TextColumn("Data/Hora", width="small"),
+                        "id_prazo": st.column_config.TextColumn("ID", width="small"),
+                        "mensagem": st.column_config.TextColumn("Notificação", width="large"),
+                        "menu_atual": st.column_config.TextColumn("Menu de Destino", width="medium"),
+                        "lida": st.column_config.TextColumn("Lida", width="small")
+                    }
+                )
+                
+                linhas_sel = tabela_notif[tabela_notif['Selecionar'] == True]
+                if st.button("Marcar como Ciente / Lida"):
+                    if not linhas_sel.empty:
+                        for idx, row in linhas_sel.iterrows():
+                            if row['lida'] == 'Não':
+                                supabase.table('notificacoes').update({'lida': 'Sim'}).eq('id', row['id']).execute()
+                        st.success("✅ Notificações atualizadas!")
+                        time.sleep(1)
+                        st.rerun()
+                    else:
+                        st.warning("Selecione pelo menos uma notificação na caixa da esquerda.")
+            else:
+                st.info("Você não tem nenhuma notificação.")
+
         # TELA 1: MEUS PRAZOS ATIVOS
-        if menu_user == "Meus Prazos Ativos":
+        elif menu_user == "Meus Prazos Ativos":
             st.header("Meus Prazos e Diligências")
             
             meus_prazos = pd.DataFrame() if df_prazos.empty else df_prazos[(df_prazos['responsavel'] == st.session_state['usuario_logado']) & (df_prazos['status'] == 'Ativo')]
@@ -869,7 +928,7 @@ def tela_principal():
                             st.warning("Selecione pelo menos uma tarefa marcando a caixa de seleção na tabela acima.")
                             
                 with col_btn2:
-                    if st.button("Enviar para P/PROTOCOLO ou ENVIO"):
+                    if st.button("P/PROTOCOLO ou ENVIO"):
                         if not linhas_selecionadas_user.empty:
                             for index, row in linhas_selecionadas_user.iterrows():
                                 supabase.table('prazos').update({'status': 'Protocolado Sem Revisão'}).eq('id_prazo', row['id_prazo']).execute()
@@ -882,7 +941,7 @@ def tela_principal():
             else:
                 st.success("Você não tem prazos ativos no momento. Bom trabalho!")
 
-        # TELA 2: P/ REVISÃO (LEITURA)
+        # TELA 2: P/ REVISÃO
         elif menu_user == "P/ REVISÃO":
             st.header("Minhas Tarefas (P/ REVISÃO)")
             minhas_revisoes = pd.DataFrame() if df_prazos.empty else df_prazos[(df_prazos['responsavel'] == st.session_state['usuario_logado']) & (df_prazos['status'] == 'Pendente de Revisão')]
@@ -900,7 +959,7 @@ def tela_principal():
             else:
                 st.info("Você não tem nenhuma tarefa aguardando revisão.")
 
-        # TELA 3: PENDENTE DE CORREÇÃO (AÇÃO)
+        # TELA 3: PENDENTE DE CORREÇÃO
         elif menu_user == "PENDENTE DE CORREÇÃO":
             st.header("Demandas Devolvidas (PENDENTE DE CORREÇÃO)")
             
@@ -936,7 +995,7 @@ def tela_principal():
             else:
                 st.success("Você não possui tarefas devolvidas para alteração no momento.")
 
-        # TELA 4: REALIZAR PROTOCOLO / ENTREGA (AÇÃO)
+        # TELA 4: REALIZAR PROTOCOLO / ENTREGA
         elif menu_user == "Realizar Protocolo/Entrega":
             st.header("Realizar Protocolo / Entrega")
             
@@ -972,7 +1031,7 @@ def tela_principal():
             else:
                 st.success("Nenhuma tarefa aguardando protocolo ou entrega neste momento.")
                 
-        # TELA 5: P/PROTOCOLO ou ENVIO (LEITURA)
+        # TELA 5: P/PROTOCOLO ou ENVIO
         elif menu_user == "P/PROTOCOLO ou ENVIO":
             st.header("Tarefas Protocoladas Sem Revisão (P/PROTOCOLO ou ENVIO)")
             st.write("Histórico das suas tarefas que foram entregues sem passar pela revisão do administrador.")
@@ -990,9 +1049,9 @@ def tela_principal():
                     column_config=config_visual_colunas
                 )
             else:
-                st.info("Você não tem nenhuma tarefa aguardando aprovação neste menu.")
+                st.info("Você não tem nenhuma tarefa protocolada sem revisão.")
 
-        # TELA 6: CONCLUÍDOS (LEITURA)
+        # TELA 6: CONCLUÍDOS
         elif menu_user == "CONCLUÍDOS":
             st.header("Processos e Tarefas Concluídas")
             st.write("Seu histórico de tarefas aprovadas e finalizadas com sucesso.")
