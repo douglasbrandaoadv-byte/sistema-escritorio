@@ -52,7 +52,6 @@ def registrar_movimentacao(id_prazo, acao, usuario):
     except Exception as e:
         pass
 
-# NOVO: Função de Disparo de Notificações
 def criar_notificacao(id_prazo, usuario_destino, mensagem, menu_atual):
     try:
         data_hora = datetime.now(timezone(timedelta(hours=-3))).strftime("%d/%m/%Y %H:%M:%S")
@@ -126,7 +125,6 @@ STATUS_OPTIONS = [
     "Pendente de Revisão", 
     "Devolvido Para Alteração", 
     "Aguardando Protocolo/Entrega", 
-    "Protocolado Sem Revisão", 
     "Protocolado/Entregue", 
     "Arquivado"
 ]
@@ -193,7 +191,6 @@ def tela_principal():
                 "PAINEL DE PRAZOS", 
                 "P/ REVISÃO", 
                 "PENDENTE DE CORREÇÃO", 
-                "P/PROTOCOLO ou ENVIO", 
                 "CONCLUÍDOS", 
                 "HISTÓRICO DAS TAREFAS", 
                 "Cadastrar Processo", 
@@ -415,8 +412,6 @@ def tela_principal():
                                 cor_fundo = "#f59e0b" 
                             elif row['status'] == 'Devolvido Para Alteração':
                                 cor_fundo = "#ec4899" 
-                            elif row['status'] == 'Protocolado Sem Revisão':
-                                cor_fundo = "#8b5cf6" 
                             elif row['status'] == 'Aguardando Protocolo/Entrega':
                                 cor_fundo = "#0ea5e9" 
                             elif row['urgente'] == 'Sim':
@@ -460,7 +455,7 @@ def tela_principal():
             else:
                 st.info("Nenhum prazo cadastrado no sistema ainda.")
 
-        # 3. P/ REVISÃO
+        # 3. P/ REVISÃO (ADMIN)
         elif menu_admin == "P/ REVISÃO":
             st.header("Aprovação de Tarefas (P/ REVISÃO)")
             st.write("Marque as tarefas e escolha a ação desejada.")
@@ -492,7 +487,7 @@ def tela_principal():
                             for index, row in linhas_selecionadas.iterrows():
                                 supabase.table('prazos').update({'status': 'Aguardando Protocolo/Entrega'}).eq('id_prazo', row['id_prazo']).execute()
                                 registrar_movimentacao(row['id_prazo'], "Aprovado - Aguardando Protocolo Final", st.session_state['usuario_logado'])
-                                criar_notificacao(row['id_prazo'], row['responsavel'], "Tarefa APROVADA! Avance para o protocolo final.", "Realizar Protocolo/Entrega")
+                                criar_notificacao(row['id_prazo'], row['responsavel'], "Tarefa APROVADA! Avance para o protocolo final.", "P/PROTOCOLO ou ENVIO")
                             st.success("✅ Tarefa(s) aprovada(s) com sucesso!")
                             time.sleep(2)
                             st.rerun()
@@ -514,7 +509,7 @@ def tela_principal():
             else:
                 st.success("Tudo limpo! Nenhuma tarefa aguardando revisão no momento.")
 
-        # 4. PENDENTE DE CORREÇÃO
+        # 4. PENDENTE DE CORREÇÃO (ADMIN)
         elif menu_admin == "PENDENTE DE CORREÇÃO":
             st.header("Demandas Devolvidas (PENDENTE DE CORREÇÃO)")
             st.write("Visualização de todas as tarefas da equipe que foram devolvidas e aguardam ajustes.")
@@ -534,59 +529,7 @@ def tela_principal():
             else:
                 st.success("Tudo limpo! Nenhuma demanda devolvida para alteração.")
 
-        # 5. P/PROTOCOLO ou ENVIO
-        elif menu_admin == "P/PROTOCOLO ou ENVIO":
-            st.header("Tarefas Protocoladas Sem Revisão (P/PROTOCOLO ou ENVIO)")
-            st.write("Selecione as tarefas enviadas pela equipe e escolha se deseja confirmar a entrega ou arquivar.")
-            
-            df_protocolado = pd.DataFrame() if df_prazos.empty else df_prazos[df_prazos['status'] == 'Protocolado Sem Revisão']
-            
-            if not df_protocolado.empty:
-                df_exibicao = formatar_tabela_exibicao(df_protocolado)
-                df_exibicao.insert(0, "Selecionar", False)
-                colunas_mostrar = ['Selecionar', 'id_prazo', 'processo', 'responsavel', 'data_fim', 'urgente', 'status', 'nome_cliente', 'orgao_ente']
-                
-                df_estilizado = df_exibicao[colunas_mostrar].style.apply(colorir_prazos, axis=1)
-                
-                tabela_protocolado = st.data_editor(
-                    df_estilizado, 
-                    use_container_width=True, hide_index=True,
-                    disabled=['id_prazo', 'processo', 'responsavel', 'data_fim', 'urgente', 'status', 'nome_cliente', 'orgao_ente'],
-                    column_config=config_visual_colunas
-                )
-                
-                linhas_selecionadas_prot = tabela_protocolado[tabela_protocolado['Selecionar'] == True]
-                
-                st.divider()
-                col_btn1, col_btn2 = st.columns(2)
-                
-                with col_btn1:
-                    if st.button("Confirmar (Protocolado/Entregue)"):
-                        if not linhas_selecionadas_prot.empty:
-                            for index, row in linhas_selecionadas_prot.iterrows():
-                                supabase.table('prazos').update({'status': 'Protocolado/Entregue'}).eq('id_prazo', row['id_prazo']).execute()
-                                registrar_movimentacao(row['id_prazo'], "Confirmado e Baixado como Entregue", st.session_state['usuario_logado'])
-                            st.success("✅ Tarefa(s) confirmada(s) como Entregue/Protocolada!")
-                            time.sleep(2)
-                            st.rerun()
-                        else:
-                            st.warning("Selecione pelo menos uma tarefa na tabela.")
-                            
-                with col_btn2:
-                    if st.button("Arquivar"):
-                        if not linhas_selecionadas_prot.empty:
-                            for index, row in linhas_selecionadas_prot.iterrows():
-                                supabase.table('prazos').update({'status': 'Arquivado'}).eq('id_prazo', row['id_prazo']).execute()
-                                registrar_movimentacao(row['id_prazo'], "Movido para Arquivo", st.session_state['usuario_logado'])
-                            st.success("✅ Tarefa(s) enviada(s) para o Arquivo.")
-                            time.sleep(2)
-                            st.rerun()
-                        else:
-                            st.warning("Selecione pelo menos uma tarefa na tabela.")
-            else:
-                st.success("Tudo limpo! Nenhuma tarefa protocolada sem revisão no momento.")
-                
-        # 6. CONCLUÍDOS
+        # 5. CONCLUÍDOS (ADMIN)
         elif menu_admin == "CONCLUÍDOS":
             st.header("Processos e Tarefas Concluídas")
             st.write("Histórico consolidado de todas as demandas finalizadas e entregues ao cliente ou protocoladas.")
@@ -606,7 +549,7 @@ def tela_principal():
             else:
                 st.info("Nenhuma demanda finalizada nesta categoria ainda.")
 
-        # 7. HISTÓRICO DAS TAREFAS (AUDITORIA)
+        # 6. HISTÓRICO DAS TAREFAS (AUDITORIA)
         elif menu_admin == "HISTÓRICO DAS TAREFAS":
             st.header("⏳ Histórico e Rastreio de Tarefas")
             st.write("Acompanhe toda a linha do tempo e as movimentações de cada tarefa no sistema.")
@@ -665,7 +608,7 @@ def tela_principal():
             else:
                 st.info("Nenhuma tarefa cadastrada no sistema.")
 
-        # 8. CADASTRAR PROCESSO
+        # 7. CADASTRAR PROCESSO
         elif menu_admin == "Cadastrar Processo":
             st.header("Cadastrar Novo Processo")
             with st.form("form_novo_processo", clear_on_submit=True):
@@ -686,7 +629,7 @@ def tela_principal():
                     else:
                         st.error("Preencha o Número e o Cliente.")
 
-        # 9. GERENCIAR USUÁRIOS
+        # 8. GERENCIAR USUÁRIOS
         elif menu_admin == "Gerenciar Usuários":
             st.header("👥 Gerenciar Usuários")
             
@@ -760,7 +703,7 @@ def tela_principal():
                         if st.button("✏️ EDITAR USUÁRIO"):
                             if len(linhas_selecionadas_user) == 1:
                                 if linhas_selecionadas_user.iloc[0]['login'] == 'admin':
-                                    st.warning("⚠️ O login 'admin' é protegido e não pode ser editado.")
+                                    st.warning("⚠️ O login 'admin' é protegido e não pode ser editado. Crie outro administrador se necessário.")
                                 else:
                                     st.session_state['modo_edicao_user'] = True
                                     st.session_state['id_editar_user'] = linhas_selecionadas_user.iloc[0]['id']
@@ -824,7 +767,6 @@ def tela_principal():
                 "Meus Prazos Ativos", 
                 "P/ REVISÃO", 
                 "PENDENTE DE CORREÇÃO", 
-                "Realizar Protocolo/Entrega", 
                 "P/PROTOCOLO ou ENVIO", 
                 "CONCLUÍDOS"
             ]
@@ -894,7 +836,7 @@ def tela_principal():
             meus_prazos = pd.DataFrame() if df_prazos.empty else df_prazos[(df_prazos['responsavel'] == st.session_state['usuario_logado']) & (df_prazos['status'] == 'Ativo')]
             
             if not meus_prazos.empty:
-                st.write("Marque a caixa de seleção da(s) tarefa(s) que deseja atualizar e escolha a ação abaixo:")
+                st.write("Marque a caixa de seleção da(s) tarefa(s) que deseja atualizar e clique em enviar para revisão.")
                 
                 meus_prazos = meus_prazos.sort_values(by='data_fim')
                 df_exibicao = formatar_tabela_exibicao(meus_prazos)
@@ -913,35 +855,20 @@ def tela_principal():
                 linhas_selecionadas_user = tabela_interativa_user[tabela_interativa_user['Selecionar'] == True]
                 
                 st.divider()
-                col_btn1, col_btn2 = st.columns(2)
-                
-                with col_btn1:
-                    if st.button("Enviar para P/ REVISÃO"):
-                        if not linhas_selecionadas_user.empty:
-                            for index, row in linhas_selecionadas_user.iterrows():
-                                supabase.table('prazos').update({'status': 'Pendente de Revisão'}).eq('id_prazo', row['id_prazo']).execute()
-                                registrar_movimentacao(row['id_prazo'], "Enviado P/ REVISÃO (Usuário)", st.session_state['usuario_logado'])
-                            st.success("✅ Tarefa(s) enviada(s) para revisão com sucesso!")
-                            time.sleep(2)
-                            st.rerun()
-                        else:
-                            st.warning("Selecione pelo menos uma tarefa marcando a caixa de seleção na tabela acima.")
-                            
-                with col_btn2:
-                    if st.button("P/PROTOCOLO ou ENVIO"):
-                        if not linhas_selecionadas_user.empty:
-                            for index, row in linhas_selecionadas_user.iterrows():
-                                supabase.table('prazos').update({'status': 'Protocolado Sem Revisão'}).eq('id_prazo', row['id_prazo']).execute()
-                                registrar_movimentacao(row['id_prazo'], "Enviado Direto P/ PROTOCOLO (Usuário)", st.session_state['usuario_logado'])
-                            st.success("✅ Tarefa(s) protocolada(s) sem revisão com sucesso!")
-                            time.sleep(2)
-                            st.rerun()
-                        else:
-                            st.warning("Selecione pelo menos uma tarefa marcando a caixa de seleção na tabela acima.")
+                if st.button("Enviar para P/ REVISÃO"):
+                    if not linhas_selecionadas_user.empty:
+                        for index, row in linhas_selecionadas_user.iterrows():
+                            supabase.table('prazos').update({'status': 'Pendente de Revisão'}).eq('id_prazo', row['id_prazo']).execute()
+                            registrar_movimentacao(row['id_prazo'], "Enviado P/ REVISÃO (Usuário)", st.session_state['usuario_logado'])
+                        st.success("✅ Tarefa(s) enviada(s) para revisão com sucesso!")
+                        time.sleep(2)
+                        st.rerun()
+                    else:
+                        st.warning("Selecione pelo menos uma tarefa marcando a caixa de seleção na tabela acima.")
             else:
                 st.success("Você não tem prazos ativos no momento. Bom trabalho!")
 
-        # TELA 2: P/ REVISÃO
+        # TELA 2: P/ REVISÃO (LEITURA)
         elif menu_user == "P/ REVISÃO":
             st.header("Minhas Tarefas (P/ REVISÃO)")
             minhas_revisoes = pd.DataFrame() if df_prazos.empty else df_prazos[(df_prazos['responsavel'] == st.session_state['usuario_logado']) & (df_prazos['status'] == 'Pendente de Revisão')]
@@ -959,7 +886,7 @@ def tela_principal():
             else:
                 st.info("Você não tem nenhuma tarefa aguardando revisão.")
 
-        # TELA 3: PENDENTE DE CORREÇÃO
+        # TELA 3: PENDENTE DE CORREÇÃO (AÇÃO)
         elif menu_user == "PENDENTE DE CORREÇÃO":
             st.header("Demandas Devolvidas (PENDENTE DE CORREÇÃO)")
             
@@ -995,9 +922,9 @@ def tela_principal():
             else:
                 st.success("Você não possui tarefas devolvidas para alteração no momento.")
 
-        # TELA 4: REALIZAR PROTOCOLO / ENTREGA
-        elif menu_user == "Realizar Protocolo/Entrega":
-            st.header("Realizar Protocolo / Entrega")
+        # TELA 4: P/PROTOCOLO ou ENVIO (AÇÃO)
+        elif menu_user == "P/PROTOCOLO ou ENVIO":
+            st.header("P/PROTOCOLO ou ENVIO")
             
             tarefas_aprovadas = pd.DataFrame() if df_prazos.empty else df_prazos[(df_prazos['responsavel'] == st.session_state['usuario_logado']) & (df_prazos['status'] == 'Aguardando Protocolo/Entrega')]
             
@@ -1030,28 +957,8 @@ def tela_principal():
                         st.warning("Selecione pelo menos uma tarefa na tabela.")
             else:
                 st.success("Nenhuma tarefa aguardando protocolo ou entrega neste momento.")
-                
-        # TELA 5: P/PROTOCOLO ou ENVIO
-        elif menu_user == "P/PROTOCOLO ou ENVIO":
-            st.header("Tarefas Protocoladas Sem Revisão (P/PROTOCOLO ou ENVIO)")
-            st.write("Histórico das suas tarefas que foram entregues sem passar pela revisão do administrador.")
-            
-            minhas_prot = pd.DataFrame() if df_prazos.empty else df_prazos[(df_prazos['responsavel'] == st.session_state['usuario_logado']) & (df_prazos['status'] == 'Protocolado Sem Revisão')]
-            
-            if not minhas_prot.empty:
-                df_exibicao = formatar_tabela_exibicao(minhas_prot)
-                colunas_mostrar = ['id_prazo', 'processo', 'responsavel', 'data_fim', 'urgente', 'status', 'nome_cliente', 'orgao_ente']
-                df_estilizado = df_exibicao[colunas_mostrar].style.apply(colorir_prazos, axis=1)
-                
-                st.dataframe(
-                    df_estilizado, 
-                    use_container_width=True, hide_index=True,
-                    column_config=config_visual_colunas
-                )
-            else:
-                st.info("Você não tem nenhuma tarefa protocolada sem revisão.")
 
-        # TELA 6: CONCLUÍDOS
+        # TELA 5: CONCLUÍDOS (LEITURA)
         elif menu_user == "CONCLUÍDOS":
             st.header("Processos e Tarefas Concluídas")
             st.write("Seu histórico de tarefas aprovadas e finalizadas com sucesso.")
