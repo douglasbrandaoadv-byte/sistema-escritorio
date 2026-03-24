@@ -41,7 +41,8 @@ def carregar_processos():
 def carregar_prazos():
     res = supabase.table('prazos').select("*").execute()
     if not res.data:
-        return pd.DataFrame(columns=['id_prazo', 'processo', 'nome_cliente', 'nome_tarefa', 'orgao_ente', 'tarefa', 'data_inicio', 'data_fim', 'responsavel', 'urgente', 'status', 'vinculado'])
+        # Adicionado o link_email
+        return pd.DataFrame(columns=['id_prazo', 'processo', 'nome_cliente', 'nome_tarefa', 'orgao_ente', 'tarefa', 'data_inicio', 'data_fim', 'responsavel', 'urgente', 'status', 'vinculado', 'link_email'])
     return pd.DataFrame(res.data)
 
 def registrar_movimentacao(id_prazo, acao, usuario):
@@ -91,14 +92,15 @@ def colorir_prazos(row):
         dias_uteis = np.busday_count(hoje.strftime('%Y-%m-%d'), data_fim.strftime('%Y-%m-%d'))
         
         if dias_uteis <= 1:
-            return ['background-color: rgba(255, 99, 71, 0.3)'] * len(row) # Vermelho
+            return ['background-color: rgba(255, 99, 71, 0.3)'] * len(row) 
         elif dias_uteis == 2:
-            return ['background-color: rgba(255, 235, 59, 0.4)'] * len(row) # Amarelo
+            return ['background-color: rgba(255, 235, 59, 0.4)'] * len(row) 
         else:
             return cor_padrao
     except:
         return cor_padrao
 
+# --- BOTÃO DE E-MAIL INTEGRADO NOS DETALHES ---
 def exibir_detalhes_tarefa(dados_completos):
     icone_urgente = "🚨 " if dados_completos['urgente'] == "Sim" else "📁 "
     with st.expander(f"{icone_urgente} {dados_completos['nome_tarefa']} | Cliente: {dados_completos['nome_cliente']}", expanded=True):
@@ -113,6 +115,10 @@ def exibir_detalhes_tarefa(dados_completos):
             st.write(f"**Urgência:** {dados_completos['urgente']}")
             st.write(f"**Data de Início:** {dados_completos['data_inicio']}")
             st.write(f"**Prazo Final:** {dados_completos['data_fim']}")
+            
+            # NOVO: Exibe botão se existir link do e-mail
+            if pd.notna(dados_completos.get('link_email')) and str(dados_completos.get('link_email')).strip() != "":
+                st.link_button("📧 Abrir E-mail Vinculado", str(dados_completos['link_email']))
         
         st.write("**Descrição Detalhada / Diligência:**")
         if pd.notna(dados_completos['tarefa']) and str(dados_completos['tarefa']).strip() != "":
@@ -132,6 +138,7 @@ STATUS_OPTIONS = [
 
 config_visual_colunas = {
     "id_prazo": None, 
+    "link_email": None, # Esconde a URL longa da tabela principal
     "Selecionar": st.column_config.CheckboxColumn("✓", width="small"),
     "processo": st.column_config.TextColumn("Processo / Tarefa", width="large"),
     "responsavel": st.column_config.TextColumn("Responsável", width="small"),
@@ -218,6 +225,10 @@ def tela_principal():
                 vincular = st.checkbox("Vincular Tarefa ao Processo")
                 nome_tarefa = st.text_input("Nome da Tarefa (*Obrigatório - Ex: Protocolar Petição, Buscar Documento):")
                 orgao = st.text_input("Órgão / Ente (Ex: 1ª Vara Cível, INSS, etc.):")
+                
+                # NOVO CAMPO: LINK DO EMAIL
+                link_email = st.text_input("Link do E-mail Vinculado (Opcional):", help="Abra o e-mail no Gmail, copie o link lá de cima do navegador (https://mail.google.com/...) e cole aqui.")
+                
                 tarefa = st.text_area("Descrição detalhada da Tarefa / Diligência:")
                 
                 col1, col2 = st.columns(2)
@@ -242,7 +253,8 @@ def tela_principal():
                             'id_prazo': novo_id, 'processo': processo_salvar, 'nome_cliente': nome_cliente, 'nome_tarefa': nome_tarefa,
                             'orgao_ente': orgao, 'tarefa': tarefa, 'data_inicio': str(data_inicio), 
                             'data_fim': str(data_fim), 'responsavel': responsavel, 
-                            'urgente': "Sim" if urgente else "Não", 'status': 'Ativo', 'vinculado': "Sim" if vincular else "Não"
+                            'urgente': "Sim" if urgente else "Não", 'status': 'Ativo', 'vinculado': "Sim" if vincular else "Não",
+                            'link_email': link_email # Salva o link no banco
                         }
                         supabase.table('prazos').insert(dados_prazo).execute()
                         registrar_movimentacao(novo_id, "Tarefa Cadastrada no Sistema", st.session_state['usuario_logado'])
@@ -359,7 +371,7 @@ def tela_principal():
                         id_alvo = st.session_state['id_editar']
                         df_editar = df_prazos[df_prazos['id_prazo'] == id_alvo].copy()
                         
-                        colunas_editaveis = ['processo', 'nome_tarefa', 'responsavel', 'data_fim', 'urgente', 'status', 'nome_cliente', 'orgao_ente', 'tarefa', 'vinculado']
+                        colunas_editaveis = ['processo', 'nome_tarefa', 'responsavel', 'data_fim', 'urgente', 'status', 'nome_cliente', 'orgao_ente', 'tarefa', 'link_email', 'vinculado']
                         
                         df_editado = st.data_editor(
                             df_editar[colunas_editaveis],
@@ -373,6 +385,7 @@ def tela_principal():
                                 "status": st.column_config.SelectboxColumn("Status", options=STATUS_OPTIONS),
                                 "nome_cliente": st.column_config.TextColumn("Cliente"),
                                 "orgao_ente": st.column_config.TextColumn("Órgão"),
+                                "link_email": st.column_config.TextColumn("Link do E-mail"),
                                 "vinculado": st.column_config.SelectboxColumn("Vinculado", options=["Sim", "Não"])
                             }
                         )
@@ -960,7 +973,7 @@ def tela_principal():
             else:
                 st.success("Você não tem prazos ativos no momento. Bom trabalho!")
 
-        # TELA 2: P/ REVISÃO
+        # TELA 2: P/ REVISÃO (LEITURA)
         elif menu_user == "P/ REVISÃO":
             st.header("Minhas Tarefas (P/ REVISÃO)")
             minhas_revisoes = pd.DataFrame() if df_prazos.empty else df_prazos[(df_prazos['responsavel'] == st.session_state['usuario_logado']) & (df_prazos['status'] == 'Pendente de Revisão')]
@@ -978,7 +991,7 @@ def tela_principal():
             else:
                 st.info("Você não tem nenhuma tarefa aguardando revisão.")
 
-        # TELA 3: PENDENTE DE CORREÇÃO
+        # TELA 3: PENDENTE DE CORREÇÃO (AÇÃO)
         elif menu_user == "PENDENTE DE CORREÇÃO":
             st.header("Demandas Devolvidas (PENDENTE DE CORREÇÃO)")
             
@@ -1050,7 +1063,27 @@ def tela_principal():
             else:
                 st.success("Nenhuma tarefa aguardando protocolo ou entrega neste momento.")
                 
-        # TELA 5: CONCLUÍDOS (LEITURA)
+        # TELA 5: PROTOCOLADO SEM REVISÃO (LEITURA)
+        elif menu_user == "Protocolado Sem Revisão":
+            st.header("Tarefas Protocoladas Sem Revisão")
+            st.write("Histórico das suas tarefas que foram entregues sem passar pela revisão do administrador.")
+            
+            minhas_prot = pd.DataFrame() if df_prazos.empty else df_prazos[(df_prazos['responsavel'] == st.session_state['usuario_logado']) & (df_prazos['status'] == 'Protocolado Sem Revisão')]
+            
+            if not minhas_prot.empty:
+                df_exibicao = formatar_tabela_exibicao(minhas_prot)
+                colunas_mostrar = ['id_prazo', 'processo', 'responsavel', 'data_fim', 'urgente', 'status', 'nome_cliente', 'orgao_ente']
+                df_estilizado = df_exibicao[colunas_mostrar].style.apply(colorir_prazos, axis=1)
+                
+                st.dataframe(
+                    df_estilizado, 
+                    use_container_width=True, hide_index=True,
+                    column_config=config_visual_colunas
+                )
+            else:
+                st.info("Você não tem nenhuma tarefa protocolada sem revisão.")
+
+        # TELA 6: CONCLUÍDOS (LEITURA)
         elif menu_user == "CONCLUÍDOS":
             st.header("Processos e Tarefas Concluídas")
             st.write("Seu histórico de tarefas aprovadas e finalizadas com sucesso.")
