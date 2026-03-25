@@ -41,9 +41,23 @@ def carregar_processos():
 def carregar_prazos():
     res = supabase.table('prazos').select("*").execute()
     if not res.data:
-        # Adicionado o link_email
         return pd.DataFrame(columns=['id_prazo', 'processo', 'nome_cliente', 'nome_tarefa', 'orgao_ente', 'tarefa', 'data_inicio', 'data_fim', 'responsavel', 'urgente', 'status', 'vinculado', 'link_email'])
-    return pd.DataFrame(res.data)
+    
+    df = pd.DataFrame(res.data)
+    
+    # Mapeamento Inteligente: Traduz status antigos do banco para a nova nomenclatura visual
+    mapa_status = {
+        "Pendente de Revisão": "P/ REVISÃO",
+        "Devolvido Para Alteração": "PENDENTE DE CORREÇÃO",
+        "Aguardando Protocolo/Entrega": "P/PROTOCOLO ou ENVIO",
+        "Protocolado Sem Revisão": "P/PROTOCOLO ou ENVIO",
+        "Protocolado/Entregue": "CONCLUÍDOS",
+        "Concluído": "CONCLUÍDOS"
+    }
+    if 'status' in df.columns:
+        df['status'] = df['status'].replace(mapa_status)
+        
+    return df
 
 def registrar_movimentacao(id_prazo, acao, usuario):
     try:
@@ -80,7 +94,7 @@ def formatar_tabela_exibicao(df):
 # --- SISTEMA DE INTELIGÊNCIA VISUAL (CORES DE ALERTA) ---
 def colorir_prazos(row):
     cor_padrao = [''] * len(row)
-    status_inativos = ["Concluído", "Arquivado", "Protocolado/Entregue", "Protocolado Sem Revisão", "Aguardando Protocolo/Entrega"]
+    status_inativos = ["CONCLUÍDOS", "Arquivado", "P/PROTOCOLO ou ENVIO"]
     
     if row.get('status') in status_inativos:
         return cor_padrao
@@ -92,9 +106,9 @@ def colorir_prazos(row):
         dias_uteis = np.busday_count(hoje.strftime('%Y-%m-%d'), data_fim.strftime('%Y-%m-%d'))
         
         if dias_uteis <= 1:
-            return ['background-color: rgba(255, 99, 71, 0.3)'] * len(row) 
+            return ['background-color: rgba(255, 99, 71, 0.3)'] * len(row) # Vermelho
         elif dias_uteis == 2:
-            return ['background-color: rgba(255, 235, 59, 0.4)'] * len(row) 
+            return ['background-color: rgba(255, 235, 59, 0.4)'] * len(row) # Amarelo
         else:
             return cor_padrao
     except:
@@ -116,7 +130,6 @@ def exibir_detalhes_tarefa(dados_completos):
             st.write(f"**Data de Início:** {dados_completos['data_inicio']}")
             st.write(f"**Prazo Final:** {dados_completos['data_fim']}")
             
-            # NOVO: Exibe botão se existir link do e-mail
             if pd.notna(dados_completos.get('link_email')) and str(dados_completos.get('link_email')).strip() != "":
                 st.link_button("📧 Abrir E-mail Vinculado", str(dados_completos['link_email']))
         
@@ -126,19 +139,19 @@ def exibir_detalhes_tarefa(dados_completos):
         else:
             st.write("*Nenhuma descrição detalhada informada.*")
 
+# LISTA PADRONIZADA DE STATUS VISUAIS
 STATUS_OPTIONS = [
     "Ativo", 
-    "Pendente de Revisão", 
-    "Devolvido Para Alteração", 
-    "Aguardando Protocolo/Entrega", 
-    "Protocolado Sem Revisão", 
-    "Protocolado/Entregue", 
+    "P/ REVISÃO", 
+    "PENDENTE DE CORREÇÃO", 
+    "P/PROTOCOLO ou ENVIO", 
+    "CONCLUÍDOS", 
     "Arquivado"
 ]
 
 config_visual_colunas = {
     "id_prazo": None, 
-    "link_email": None, # Esconde a URL longa da tabela principal
+    "link_email": None,
     "Selecionar": st.column_config.CheckboxColumn("✓", width="small"),
     "processo": st.column_config.TextColumn("Processo / Tarefa", width="large"),
     "responsavel": st.column_config.TextColumn("Responsável", width="small"),
@@ -225,10 +238,7 @@ def tela_principal():
                 vincular = st.checkbox("Vincular Tarefa ao Processo")
                 nome_tarefa = st.text_input("Nome da Tarefa (*Obrigatório - Ex: Protocolar Petição, Buscar Documento):")
                 orgao = st.text_input("Órgão / Ente (Ex: 1ª Vara Cível, INSS, etc.):")
-                
-                # NOVO CAMPO: LINK DO EMAIL
                 link_email = st.text_input("Link do E-mail Vinculado (Opcional):", help="Abra o e-mail no Gmail, copie o link lá de cima do navegador (https://mail.google.com/...) e cole aqui.")
-                
                 tarefa = st.text_area("Descrição detalhada da Tarefa / Diligência:")
                 
                 col1, col2 = st.columns(2)
@@ -254,7 +264,7 @@ def tela_principal():
                             'orgao_ente': orgao, 'tarefa': tarefa, 'data_inicio': str(data_inicio), 
                             'data_fim': str(data_fim), 'responsavel': responsavel, 
                             'urgente': "Sim" if urgente else "Não", 'status': 'Ativo', 'vinculado': "Sim" if vincular else "Não",
-                            'link_email': link_email # Salva o link no banco
+                            'link_email': link_email
                         }
                         supabase.table('prazos').insert(dados_prazo).execute()
                         registrar_movimentacao(novo_id, "Tarefa Cadastrada no Sistema", st.session_state['usuario_logado'])
@@ -280,7 +290,7 @@ def tela_principal():
                     with col_f3:
                         filtro_resp = st.multiselect("Responsável:", options=lista_usuarios)
                     with col_f4:
-                        filtro_status = st.multiselect("Status:", options=STATUS_OPTIONS, default=["Ativo", "Pendente de Revisão", "Devolvido Para Alteração", "Aguardando Protocolo/Entrega"])
+                        filtro_status = st.multiselect("Status:", options=STATUS_OPTIONS, default=["Ativo", "P/ REVISÃO", "PENDENTE DE CORREÇÃO", "P/PROTOCOLO ou ENVIO"])
                     with col_f5:
                         filtro_urgente = st.multiselect("Urgente:", options=["Sim", "Não"])
                 
@@ -382,7 +392,7 @@ def tela_principal():
                                 "responsavel": st.column_config.SelectboxColumn("Responsável", options=lista_usuarios),
                                 "data_fim": st.column_config.TextColumn("Prazo Final"),
                                 "urgente": st.column_config.SelectboxColumn("Urgente", options=["Sim", "Não"]),
-                                "status": st.column_config.SelectboxColumn("Status", options=STATUS_OPTIONS),
+                                "status": st.column_config.SelectboxColumn("Status", options=STATUS_OPTIONS), # USA AS OPÇÕES CORRIGIDAS!
                                 "nome_cliente": st.column_config.TextColumn("Cliente"),
                                 "orgao_ente": st.column_config.TextColumn("Órgão"),
                                 "link_email": st.column_config.TextColumn("Link do E-mail"),
@@ -421,16 +431,14 @@ def tela_principal():
                                 continue
                                 
                             cor_fundo = "#3b82f6" 
-                            if row['status'] in ['Protocolado/Entregue', 'Concluído']:
+                            if row['status'] == 'CONCLUÍDOS':
                                 cor_fundo = "#10b981" 
-                            elif row['status'] == 'Pendente de Revisão':
+                            elif row['status'] == 'P/ REVISÃO':
                                 cor_fundo = "#f59e0b" 
-                            elif row['status'] == 'Devolvido Para Alteração':
+                            elif row['status'] == 'PENDENTE DE CORREÇÃO':
                                 cor_fundo = "#ec4899" 
-                            elif row['status'] == 'Protocolado Sem Revisão':
+                            elif row['status'] == 'P/PROTOCOLO ou ENVIO':
                                 cor_fundo = "#8b5cf6" 
-                            elif row['status'] == 'Aguardando Protocolo/Entrega':
-                                cor_fundo = "#0ea5e9" 
                             elif row['urgente'] == 'Sim':
                                 cor_fundo = "#ef4444" 
                             
@@ -477,7 +485,7 @@ def tela_principal():
             st.header("Aprovação de Tarefas (P/ REVISÃO)")
             st.write("Marque as tarefas e escolha a ação desejada.")
             
-            df_revisao = pd.DataFrame() if df_prazos.empty else df_prazos[df_prazos['status'] == 'Pendente de Revisão']
+            df_revisao = pd.DataFrame() if df_prazos.empty else df_prazos[df_prazos['status'] == 'P/ REVISÃO']
             
             if not df_revisao.empty:
                 df_exibicao = formatar_tabela_exibicao(df_revisao)
@@ -502,7 +510,7 @@ def tela_principal():
                     if st.button("P/ PROTOCOLO ou ENVIO"):
                         if not linhas_selecionadas.empty:
                             for index, row in linhas_selecionadas.iterrows():
-                                supabase.table('prazos').update({'status': 'Aguardando Protocolo/Entrega'}).eq('id_prazo', row['id_prazo']).execute()
+                                supabase.table('prazos').update({'status': 'P/PROTOCOLO ou ENVIO'}).eq('id_prazo', row['id_prazo']).execute()
                                 registrar_movimentacao(row['id_prazo'], "Aprovado - Aguardando Protocolo Final", st.session_state['usuario_logado'])
                                 criar_notificacao(row['id_prazo'], row['responsavel'], "Tarefa APROVADA! Avance para o protocolo final.", "P/PROTOCOLO ou ENVIO")
                             st.success("✅ Tarefa(s) aprovada(s) com sucesso!")
@@ -515,7 +523,7 @@ def tela_principal():
                     if st.button("Enviar P/ CORREÇÃO"):
                         if not linhas_selecionadas.empty:
                             for index, row in linhas_selecionadas.iterrows():
-                                supabase.table('prazos').update({'status': 'Devolvido Para Alteração'}).eq('id_prazo', row['id_prazo']).execute()
+                                supabase.table('prazos').update({'status': 'PENDENTE DE CORREÇÃO'}).eq('id_prazo', row['id_prazo']).execute()
                                 registrar_movimentacao(row['id_prazo'], "Devolvido para Correção", st.session_state['usuario_logado'])
                                 criar_notificacao(row['id_prazo'], row['responsavel'], "Tarefa DEVOLVIDA! Verifique as correções necessárias.", "PENDENTE DE CORREÇÃO")
                             st.success("✅ Tarefa(s) devolvida(s) para o responsável realizar ajustes!")
@@ -531,7 +539,7 @@ def tela_principal():
             st.header("Demandas Devolvidas (PENDENTE DE CORREÇÃO)")
             st.write("Visualização de todas as tarefas da equipe que foram devolvidas e aguardam ajustes.")
             
-            df_devolvidos = pd.DataFrame() if df_prazos.empty else df_prazos[df_prazos['status'] == 'Devolvido Para Alteração']
+            df_devolvidos = pd.DataFrame() if df_prazos.empty else df_prazos[df_prazos['status'] == 'PENDENTE DE CORREÇÃO']
             
             if not df_devolvidos.empty:
                 df_exibicao = formatar_tabela_exibicao(df_devolvidos)
@@ -551,7 +559,7 @@ def tela_principal():
             st.header("Tarefas Protocoladas Sem Revisão (P/PROTOCOLO ou ENVIO)")
             st.write("Selecione as tarefas enviadas pela equipe e escolha se deseja confirmar a entrega ou arquivar.")
             
-            df_protocolado = pd.DataFrame() if df_prazos.empty else df_prazos[df_prazos['status'] == 'Protocolado Sem Revisão']
+            df_protocolado = pd.DataFrame() if df_prazos.empty else df_prazos[df_prazos['status'] == 'P/PROTOCOLO ou ENVIO']
             
             if not df_protocolado.empty:
                 df_exibicao = formatar_tabela_exibicao(df_protocolado)
@@ -573,10 +581,10 @@ def tela_principal():
                 col_btn1, col_btn2 = st.columns(2)
                 
                 with col_btn1:
-                    if st.button("Confirmar (Protocolado/Entregue)"):
+                    if st.button("Confirmar (CONCLUÍDOS)"):
                         if not linhas_selecionadas_prot.empty:
                             for index, row in linhas_selecionadas_prot.iterrows():
-                                supabase.table('prazos').update({'status': 'Protocolado/Entregue'}).eq('id_prazo', row['id_prazo']).execute()
+                                supabase.table('prazos').update({'status': 'CONCLUÍDOS'}).eq('id_prazo', row['id_prazo']).execute()
                                 registrar_movimentacao(row['id_prazo'], "Confirmado e Baixado como Entregue", st.session_state['usuario_logado'])
                             st.success("✅ Tarefa(s) confirmada(s) como Entregue/Protocolada!")
                             time.sleep(2)
@@ -603,7 +611,7 @@ def tela_principal():
             st.header("Processos e Tarefas Concluídas")
             st.write("Histórico consolidado de todas as demandas finalizadas e entregues ao cliente ou protocoladas.")
             
-            df_finalizados = pd.DataFrame() if df_prazos.empty else df_prazos[df_prazos['status'] == 'Protocolado/Entregue']
+            df_finalizados = pd.DataFrame() if df_prazos.empty else df_prazos[df_prazos['status'] == 'CONCLUÍDOS']
             
             if not df_finalizados.empty:
                 with st.expander("🔍 Filtros de Busca", expanded=True):
@@ -842,7 +850,6 @@ def tela_principal():
     # VISÃO DO USUÁRIO COMUM
     # ==========================================
     else:
-        # AVISO DE NOTIFICAÇÕES NÃO LIDAS NO TOPO
         try:
             res_nao_lidas = supabase.table('notificacoes').select('*').eq('usuario_destino', st.session_state['usuario_logado']).eq('lida', 'Não').execute()
             if res_nao_lidas.data:
@@ -951,7 +958,7 @@ def tela_principal():
                     if st.button("Enviar para P/ REVISÃO"):
                         if not linhas_selecionadas_user.empty:
                             for index, row in linhas_selecionadas_user.iterrows():
-                                supabase.table('prazos').update({'status': 'Pendente de Revisão'}).eq('id_prazo', row['id_prazo']).execute()
+                                supabase.table('prazos').update({'status': 'P/ REVISÃO'}).eq('id_prazo', row['id_prazo']).execute()
                                 registrar_movimentacao(row['id_prazo'], "Enviado P/ REVISÃO (Usuário)", st.session_state['usuario_logado'])
                             st.success("✅ Tarefa(s) enviada(s) para revisão com sucesso!")
                             time.sleep(2)
@@ -963,7 +970,7 @@ def tela_principal():
                     if st.button("P/PROTOCOLO ou ENVIO"):
                         if not linhas_selecionadas_user.empty:
                             for index, row in linhas_selecionadas_user.iterrows():
-                                supabase.table('prazos').update({'status': 'Protocolado Sem Revisão'}).eq('id_prazo', row['id_prazo']).execute()
+                                supabase.table('prazos').update({'status': 'P/PROTOCOLO ou ENVIO'}).eq('id_prazo', row['id_prazo']).execute()
                                 registrar_movimentacao(row['id_prazo'], "Enviado Direto P/ PROTOCOLO (Usuário)", st.session_state['usuario_logado'])
                             st.success("✅ Tarefa(s) protocolada(s) sem revisão com sucesso!")
                             time.sleep(2)
@@ -973,10 +980,10 @@ def tela_principal():
             else:
                 st.success("Você não tem prazos ativos no momento. Bom trabalho!")
 
-        # TELA 2: P/ REVISÃO (LEITURA)
+        # TELA 2: P/ REVISÃO
         elif menu_user == "P/ REVISÃO":
             st.header("Minhas Tarefas (P/ REVISÃO)")
-            minhas_revisoes = pd.DataFrame() if df_prazos.empty else df_prazos[(df_prazos['responsavel'] == st.session_state['usuario_logado']) & (df_prazos['status'] == 'Pendente de Revisão')]
+            minhas_revisoes = pd.DataFrame() if df_prazos.empty else df_prazos[(df_prazos['responsavel'] == st.session_state['usuario_logado']) & (df_prazos['status'] == 'P/ REVISÃO')]
             
             if not minhas_revisoes.empty:
                 df_exibicao = formatar_tabela_exibicao(minhas_revisoes)
@@ -991,11 +998,11 @@ def tela_principal():
             else:
                 st.info("Você não tem nenhuma tarefa aguardando revisão.")
 
-        # TELA 3: PENDENTE DE CORREÇÃO (AÇÃO)
+        # TELA 3: PENDENTE DE CORREÇÃO
         elif menu_user == "PENDENTE DE CORREÇÃO":
             st.header("Demandas Devolvidas (PENDENTE DE CORREÇÃO)")
             
-            tarefas_devolvidas = pd.DataFrame() if df_prazos.empty else df_prazos[(df_prazos['responsavel'] == st.session_state['usuario_logado']) & (df_prazos['status'] == 'Devolvido Para Alteração')]
+            tarefas_devolvidas = pd.DataFrame() if df_prazos.empty else df_prazos[(df_prazos['responsavel'] == st.session_state['usuario_logado']) & (df_prazos['status'] == 'PENDENTE DE CORREÇÃO')]
             
             if not tarefas_devolvidas.empty:
                 st.write("Realize as alterações exigidas pelo administrador, selecione as tarefas abaixo e envie novamente para revisão.")
@@ -1014,10 +1021,10 @@ def tela_principal():
                 
                 linhas_selecionadas_dev = tabela_devolvidas[tabela_devolvidas['Selecionar'] == True]
                 
-                if st.button("Reenviar Para Revisão"):
+                if st.button("Reenviar Para P/ REVISÃO"):
                     if not linhas_selecionadas_dev.empty:
                         for index, row in linhas_selecionadas_dev.iterrows():
-                            supabase.table('prazos').update({'status': 'Pendente de Revisão'}).eq('id_prazo', row['id_prazo']).execute()
+                            supabase.table('prazos').update({'status': 'P/ REVISÃO'}).eq('id_prazo', row['id_prazo']).execute()
                             registrar_movimentacao(row['id_prazo'], "Reenviado P/ REVISÃO após Correção", st.session_state['usuario_logado'])
                         st.success("✅ Tarefa(s) reenviada(s) para revisão!")
                         time.sleep(2)
@@ -1031,7 +1038,7 @@ def tela_principal():
         elif menu_user == "P/PROTOCOLO ou ENVIO":
             st.header("P/PROTOCOLO ou ENVIO")
             
-            tarefas_aprovadas = pd.DataFrame() if df_prazos.empty else df_prazos[(df_prazos['responsavel'] == st.session_state['usuario_logado']) & (df_prazos['status'] == 'Aguardando Protocolo/Entrega')]
+            tarefas_aprovadas = pd.DataFrame() if df_prazos.empty else df_prazos[(df_prazos['responsavel'] == st.session_state['usuario_logado']) & (df_prazos['status'] == 'P/PROTOCOLO ou ENVIO')]
             
             if not tarefas_aprovadas.empty:
                 st.write("Estas tarefas foram aprovadas. Após o protocolo ou entrega final, selecione as caixas e conclua a etapa.")
@@ -1053,7 +1060,7 @@ def tela_principal():
                 if st.button("Enviar para CONCLUÍDOS"):
                     if not linhas_selecionadas_prot.empty:
                         for index, row in linhas_selecionadas_prot.iterrows():
-                            supabase.table('prazos').update({'status': 'Protocolado/Entregue'}).eq('id_prazo', row['id_prazo']).execute()
+                            supabase.table('prazos').update({'status': 'CONCLUÍDOS'}).eq('id_prazo', row['id_prazo']).execute()
                             registrar_movimentacao(row['id_prazo'], "Marcado como Concluído (Entregue)", st.session_state['usuario_logado'])
                         st.success("✅ Tarefa(s) concluída(s) e registrada(s) como protocolada/entregue!")
                         time.sleep(2)
@@ -1062,33 +1069,13 @@ def tela_principal():
                         st.warning("Selecione pelo menos uma tarefa na tabela.")
             else:
                 st.success("Nenhuma tarefa aguardando protocolo ou entrega neste momento.")
-                
-        # TELA 5: PROTOCOLADO SEM REVISÃO (LEITURA)
-        elif menu_user == "Protocolado Sem Revisão":
-            st.header("Tarefas Protocoladas Sem Revisão")
-            st.write("Histórico das suas tarefas que foram entregues sem passar pela revisão do administrador.")
-            
-            minhas_prot = pd.DataFrame() if df_prazos.empty else df_prazos[(df_prazos['responsavel'] == st.session_state['usuario_logado']) & (df_prazos['status'] == 'Protocolado Sem Revisão')]
-            
-            if not minhas_prot.empty:
-                df_exibicao = formatar_tabela_exibicao(minhas_prot)
-                colunas_mostrar = ['id_prazo', 'processo', 'responsavel', 'data_fim', 'urgente', 'status', 'nome_cliente', 'orgao_ente']
-                df_estilizado = df_exibicao[colunas_mostrar].style.apply(colorir_prazos, axis=1)
-                
-                st.dataframe(
-                    df_estilizado, 
-                    use_container_width=True, hide_index=True,
-                    column_config=config_visual_colunas
-                )
-            else:
-                st.info("Você não tem nenhuma tarefa protocolada sem revisão.")
 
-        # TELA 6: CONCLUÍDOS (LEITURA)
+        # TELA 5: CONCLUÍDOS (LEITURA)
         elif menu_user == "CONCLUÍDOS":
             st.header("Processos e Tarefas Concluídas")
             st.write("Seu histórico de tarefas aprovadas e finalizadas com sucesso.")
             
-            minhas_finalizadas = pd.DataFrame() if df_prazos.empty else df_prazos[(df_prazos['responsavel'] == st.session_state['usuario_logado']) & (df_prazos['status'] == 'Protocolado/Entregue')]
+            minhas_finalizadas = pd.DataFrame() if df_prazos.empty else df_prazos[(df_prazos['responsavel'] == st.session_state['usuario_logado']) & (df_prazos['status'] == 'CONCLUÍDOS')]
             
             if not minhas_finalizadas.empty:
                 df_exibicao = formatar_tabela_exibicao(minhas_finalizadas)
